@@ -1,0 +1,27 @@
+{
+  "name": "hotelos",
+  "version": "1.0.0",
+  "description": "HotelOS — Real Vaqtli Mehmonxona Boshqaruv Tizimi (BTEC Module 4 — Dasturlash)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node src/tests/testRunner.js"
+  },
+  "keywords": [
+    "hotelos",
+    "microservices",
+    "websocket",
+    "btec",
+    "pearson"
+  ],
+  "author": "Shahzod Nematov (PDP University, BIT)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}

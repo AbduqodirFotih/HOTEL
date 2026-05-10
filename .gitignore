@@ -1,0 +1,30 @@
+# Bog'liqliklar
+node_modules/
+
+# Saqlangan ma'lumotlar (har bir muhitda farqlanadi)
+data.json
+
+# Jurnal va kesh fayllar
+*.log
+.cache/
+.npm/
+
+# Tahrirlovchi muhit fayllari
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS fayllari
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Muhit o'zgaruvchilari
+.env
+.env.local
+
+# Test va qoplama natijalari
+coverage/
+*.lcov
+.nyc_output/
