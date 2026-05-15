@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="uz" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="HotelOS - Real-Time Hotel Management System">
+  <title>HotelOS — GrandStay Hotel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23C9A961'/><text x='16' y='22' text-anchor='middle' fill='white' font-family='serif' font-size='18' font-weight='700'>H</text></svg>">
+</head>
+<body>
+
+<!-- ============================================================
+     LOGIN VIEW
+     ============================================================ -->
+<div id="view-login" class="login-page">
+  <div class="login-hero">
+    <div class="brand-mark">
+      <div class="brand-logo">H</div>
+      <div class="brand-name">HotelOS</div>
+    </div>
+    <h1 class="hero-title">Real vaqtli mehmonxona boshqaruv tizimi</h1>
+    <p class="hero-subtitle">
+      GrandStay Hotel ning to'rt bo'limini bitta platformada birlashtirgan, mikroservis arxitekturasi va WebSocket asosida qurilgan zamonaviy boshqaruv yechimi.
+    </p>
+    <div class="hero-features">
+      <div class="hero-feature">
+        <div class="hero-feature-icon">⚙</div>
+        <div class="hero-feature-text">
+          <span class="hero-feature-title">4 Mikroservis</span>
+          Reception, Tozalash, Xona xizmati, Texnik xizmat
+        </div>
+      </div>
+      <div class="hero-feature">
+        <div class="hero-feature-icon">📡</div>
+        <div class="hero-feature-text">
+          <span class="hero-feature-title">Real vaqtli</span>
+          WebSocket orqali jonli yangilanishlar
+        </div>
+      </div>
+      <div class="hero-feature">
+        <div class="hero-feature-icon">🔐</div>
+        <div class="hero-feature-text">
+          <span class="hero-feature-title">Xavfsiz</span>
+          Rolga asoslangan kirish nazorati
+        </div>
+      </div>
+      <div class="hero-feature">
+        <div class="hero-feature-icon">✓</div>
+        <div class="hero-feature-text">
+          <span class="hero-feature-title">8 Test stsenariy</span>
+          Avtomatlashtirilgan tekshiruv
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-form-wrap">
+    <div class="login-form">
+      <h2>Tizimga kirish</h2>
+      <p class="login-form-subtitle">GrandStay Hotel operatsiyalar paneliga xush kelibsiz</p>
+
+      <form id="login-form">
+        <div class="form-group">
+          <label class="form-label">Foydalanuvchi nomi</label>
+          <input type="text" class="form-input" id="login-username" placeholder="manager" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Parol</label>
+          <input type="password" class="form-input" id="login-password" placeholder="••••••••" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="text-danger text-sm mb-3 hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Kirish</button>
+      </form>
+
+      <div class="demo-accounts">
+        <h4>Demo hisoblar (bosing — avtomatik to'ldiriladi)</h4>
+        <div class="demo-accounts-grid">
+          <button type="button" class="demo-account" data-user="admin" data-pass="admin123">
+            <span class="demo-account-role">Bosh Menejer</span>admin / admin123
+          </button>
+          <button type="button" class="demo-account" data-user="reception" data-pass="reception123">
+            <span class="demo-account-role">Qabul</span>reception / reception123
+          </button>
+          <button type="button" class="demo-account" data-user="housekeeping" data-pass="housekeeping123">
+            <span class="demo-account-role">Tozalash</span>housekeeping / housekeeping123
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN APP VIEW
+     ============================================================ -->
+<div id="view-app" class="app-layout hidden">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-logo">H</div>
+      <div class="brand-name">HotelOS</div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Operatsiyalar</div>
+      <button class="nav-item active" data-page="dashboard"><span class="nav-item-icon">▦</span> Dashboard</button>
+      <button class="nav-item" data-page="rooms"><span class="nav-item-icon">▢</span> Xonalar</button>
+      <button class="nav-item" data-page="reception"><span class="nav-item-icon">⊙</span> Qabul</button>
+      <button class="nav-item" data-page="housekeeping"><span class="nav-item-icon">✦</span> Tozalash</button>
+      <button class="nav-item" data-page="orders"><span class="nav-item-icon">◇</span> Buyurtmalar</button>
+      <button class="nav-item" data-page="maintenance"><span class="nav-item-icon">⚒</span> Texnik xizmat</button>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Tahlil</div>
+      <button class="nav-item" data-page="tests"><span class="nav-item-icon">⚐</span> Test Stsenariylari</button>
+      <button class="nav-item" data-page="events"><span class="nav-item-icon">⌬</span> Hodisa Jurnali</button>
+      <button class="nav-item" data-page="architecture"><span class="nav-item-icon">⊞</span> Arxitektura</button>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-section-label">Tizim</div>
+      <button class="nav-item" data-page="settings"><span class="nav-item-icon">⚙</span> Sozlamalar</button>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar" id="user-avatar">U</div>
+        <div class="user-info">
+          <div class="user-name" id="user-name">User</div>
+          <div class="user-role" id="user-role">role</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="btn-logout" title="Chiqish">⎋</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main content area -->
+  <main class="main-content" id="main-content">
+    <!-- Topbar -->
+    <header class="topbar" id="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title" id="page-title">Dashboard</h1>
+        <p class="page-subtitle" id="page-subtitle">Operatsiyalar haqida umumiy ko'rinish</p>
+      </div>
+      <div class="topbar-right">
+        <div class="connection-indicator" id="ws-indicator">
+          <span class="live-dot"></span> Ulanmoqda...
+        </div>
+        <button class="btn btn-ghost icon-btn" id="btn-notifications" title="Bildirishnomalar">
+          <span>🔔</span>
+          <span class="badge" id="notif-badge" style="display:none">0</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <div id="page-content"></div>
+  </main>
+</div>
+
+<!-- Toast notification container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h3 class="modal-title" id="modal-title">Modal</h3>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<!-- WebSocket ulanishi ui.js ichida o'rnatiladi (kutubxonalarsiz) -->
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/pages.js"></script>
+<script src="/js/app.js"></script>
+
+</body>
+</html>
