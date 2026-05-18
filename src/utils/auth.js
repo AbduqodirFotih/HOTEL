@@ -1,15 +1,19 @@
 /**
  * auth.js
  * --------------------------------------------------------------------------
- * Autentifikatsiya va Rolga Asoslangan Kirish Nazorati (RBAC).
+ * Token asosidagi autentifikatsiya + rolga asoslangan kirish nazorati (RBAC).
  *
- * Ish jarayoni:
- *   1) Login -> validation -> token yaratiladi (8 soat TTL)
- *   2) Har bir API so'rovi tokenni tekshiradi (requireAuth)
- *   3) Maxfiy operatsiyalar uchun rol ham tekshiriladi (requireRole)
+ * 4 ta rol mavjud:
+ *   - manager       (Bosh menejer)   — to'liq kirish, statistika, sozlamalar
+ *   - reception     (Qabul xodimi)   — check-in/out, buyurtmalar, maint hisobot
+ *   - housekeeping  (Tozalash xodim) — faqat tozalash navbatini boshqarish
+ *   - maintenance   (Texnik xodim)   — faqat texnik xizmat so'rovlari
  *
- * Asosiy mantiq: 4 ta xodim bo'limi = 4 ta rol. Har biri o'z bo'limi
- * doirasida ishlaydi. Xato kirishlarga 403 qaytariladi (raw stack izi yo'q).
+ * Har bir rolga aniq ruxsatlar to'plami (permissions) belgilangan. API
+ * endpointlari requirePermission() o'rqali bu ruxsatlarni tekshiradi. Bundan
+ * tashqari, panel ma'lumotlarini rolga qarab tozalash funksiyasi mavjud:
+ * narxlar, daromad va to'lov tafsilotlari faqat moliyaviy ko'rish huquqi
+ * bo'lgan rollarga ko'rinadi.
  * --------------------------------------------------------------------------
  */
 
@@ -18,118 +22,134 @@
 const crypto = require('crypto');
 const logger = require('./logger');
 
+// --------------------------------------------------------------------------
+// PAROLLARNI SHIFRLASH
+// --------------------------------------------------------------------------
 const SALT = 'hotelos-pdp-2026';
+
 function hashPassword(plain) {
   return crypto.createHash('sha256').update(SALT + plain).digest('hex');
 }
 
-// ============================================================================
-// 4 ta demo foydalanuvchi — har biri o'z bo'limini boshqaradi
-// ============================================================================
+// --------------------------------------------------------------------------
+// FOYDALANUVCHILAR (demo hisoblar)
+// --------------------------------------------------------------------------
 const USERS = [
-  { username: 'admin',        passwordHash: hashPassword('admin123'),        role: 'manager',      displayName: 'Bosh Menejer' },
-  { username: 'reception',    passwordHash: hashPassword('reception123'),    role: 'reception',    displayName: 'Qabul Xodimi' },
-  { username: 'housekeeping', passwordHash: hashPassword('housekeeping123'), role: 'housekeeping', displayName: 'Tozalash Xodimi' },
-  { username: 'maintenance',  passwordHash: hashPassword('maintenance123'),  role: 'maintenance',  displayName: 'Texnik Xodim' },
+  { username: 'admin',         passwordHash: hashPassword('admin123'),         role: 'manager',      displayName: 'Bosh Menejer' },
+  { username: 'reception',     passwordHash: hashPassword('reception123'),     role: 'reception',    displayName: 'Qabul Xodimi' },
+  { username: 'housekeeping',  passwordHash: hashPassword('housekeeping123'),  role: 'housekeeping', displayName: 'Tozalash Xodimi' },
+  { username: 'maintenance',   passwordHash: hashPassword('maintenance123'),   role: 'maintenance',  displayName: 'Texnik Xodim' },
 ];
 
-// ============================================================================
-// ROL HUQUQLARI MATRITSASI
-// Tizimda kim nimani qila olishi mantiqi shu yerda. Backend ham, frontend ham
-// shu manbadan foydalanadi — bitta haqiqat manbai (single source of truth).
-// ============================================================================
-const ROLE_PERMISSIONS = {
+// --------------------------------------------------------------------------
+// ROLGA ASOSLANGAN SIYOSAT (POLICIES)
+//
+// Har bir rol uchun:
+//   - permissions: API endpointlariga kirish ruxsatlari
+//   - pages: panelda ko'rinadigan sahifalar (sidebar uchun)
+//   - landingPage: tizimga kirgandan so'ng ochiladigan sahifa
+//   - canSeeFinancials: narxlar va daromadlarni ko'rsatish
+//   - canSeeStaffNames: xodimlar ismlari (texnik, tozalovchi)
+// --------------------------------------------------------------------------
+const POLICIES = {
   manager: {
-    label: 'Bosh Menejer',
-    color: '#C9A961', // shampan oltini
+    role: 'manager',
+    displayName: 'Bosh Menejer',
+    description: 'To\'liq tizim boshqaruvi — barcha bo\'limlar va sozlamalarga kirish',
+    canSeeFinancials: true,
+    canSeeStaffNames: true,
+    permissions: new Set([
+      'reception.checkin', 'reception.checkout', 'reception.inventory',
+      'housekeeping.queue.view', 'housekeeping.start', 'housekeeping.complete', 'housekeeping.enqueue',
+      'orders.view', 'orders.create', 'orders.advance', 'orders.cancel', 'orders.menu',
+      'maintenance.view', 'maintenance.report', 'maintenance.resolve',
+      'notifications.view', 'notifications.modify',
+      'settings.view', 'settings.update', 'settings.reset',
+      'tests.run',
+      'events.view', 'broker.topics',
+      'dashboard.view',
+    ]),
     pages: ['dashboard', 'rooms', 'reception', 'housekeeping', 'orders', 'maintenance', 'tests', 'events', 'architecture', 'settings'],
-    seePrices: true,
-    seeGuestNames: true,
-    seeRevenue: true,
-    canCheckIn: true,
-    canCheckOut: true,
-    canCreateOrder: true,
-    canAdvanceOrder: true,
-    canCleanRoom: true,
-    canReportMaintenance: true,
-    canResolveMaintenance: true,
-    canChangeSettings: true,
-    canResetData: true,
-    canRunTests: true,
-    canViewEvents: true,
+    landingPage: 'dashboard',
   },
   reception: {
-    label: 'Qabul Xodimi',
-    color: '#4A6FA5', // tinch navy
-    pages: ['dashboard', 'rooms', 'reception', 'orders', 'maintenance'],
-    seePrices: true,
-    seeGuestNames: true,
-    seeRevenue: false,
-    canCheckIn: true,
-    canCheckOut: true,
-    canCreateOrder: true,
-    canAdvanceOrder: true,
-    canCleanRoom: false,
-    canReportMaintenance: true,
-    canResolveMaintenance: false,
-    canChangeSettings: false,
-    canResetData: false,
-    canRunTests: false,
-    canViewEvents: false,
+    role: 'reception',
+    displayName: 'Qabul Xodimi',
+    description: 'Mehmonlarni qabul qilish, hisob-kitob, buyurtmalar va texnik muammolarni qayd etish',
+    canSeeFinancials: true,
+    canSeeStaffNames: true,
+    permissions: new Set([
+      'reception.checkin', 'reception.checkout', 'reception.inventory',
+      'housekeeping.queue.view', 'housekeeping.enqueue',
+      'orders.view', 'orders.create', 'orders.advance', 'orders.cancel', 'orders.menu',
+      'maintenance.view', 'maintenance.report',
+      'notifications.view', 'notifications.modify',
+      'settings.view',
+      'events.view',
+      'dashboard.view',
+    ]),
+    pages: ['dashboard', 'rooms', 'reception', 'orders', 'maintenance', 'events', 'architecture', 'settings'],
+    landingPage: 'reception',
   },
   housekeeping: {
-    label: 'Tozalash Xodimi',
-    color: '#10B981', // ko'k-yashil (toza)
-    pages: ['dashboard', 'rooms', 'housekeeping'],
-    seePrices: false,        // narx ko'rmaydi
-    seeGuestNames: false,    // mehmon ismi ko'rmaydi
-    seeRevenue: false,
-    canCheckIn: false,
-    canCheckOut: false,
-    canCreateOrder: false,
-    canAdvanceOrder: false,
-    canCleanRoom: true,      // asosiy vazifa
-    canReportMaintenance: true, // tozalash vaqtida muammo topsa, xabar bera oladi
-    canResolveMaintenance: false,
-    canChangeSettings: false,
-    canResetData: false,
-    canRunTests: false,
-    canViewEvents: false,
+    role: 'housekeeping',
+    displayName: 'Tozalash Xodimi',
+    description: 'Faqat tozalash navbati va xona holatlarini boshqarish — narxlarsiz',
+    canSeeFinancials: false,
+    canSeeStaffNames: false,
+    permissions: new Set([
+      'reception.inventory',
+      'housekeeping.queue.view', 'housekeeping.start', 'housekeeping.complete', 'housekeeping.enqueue',
+      'notifications.view', 'notifications.modify',
+      'settings.view',
+      'events.view',
+      'dashboard.view',
+    ]),
+    pages: ['dashboard', 'rooms', 'housekeeping', 'events', 'architecture', 'settings'],
+    landingPage: 'housekeeping',
   },
   maintenance: {
-    label: 'Texnik Xodim',
-    color: '#F59E0B', // amber (texnik)
-    pages: ['dashboard', 'rooms', 'maintenance'],
-    seePrices: false,        // narx ko'rmaydi
-    seeGuestNames: false,    // mehmon ismi ko'rmaydi
-    seeRevenue: false,
-    canCheckIn: false,
-    canCheckOut: false,
-    canCreateOrder: false,
-    canAdvanceOrder: false,
-    canCleanRoom: false,
-    canReportMaintenance: true,  // o'zi qo'shimcha so'rov ham yarata oladi
-    canResolveMaintenance: true, // asosiy vazifa
-    canChangeSettings: false,
-    canResetData: false,
-    canRunTests: false,
-    canViewEvents: false,
+    role: 'maintenance',
+    displayName: 'Texnik Xodim',
+    description: 'Faqat texnik xizmat so\'rovlari — ustuvorlik navbatini boshqarish',
+    canSeeFinancials: false,
+    canSeeStaffNames: true,
+    permissions: new Set([
+      'reception.inventory',
+      'maintenance.view', 'maintenance.report', 'maintenance.resolve',
+      'notifications.view', 'notifications.modify',
+      'settings.view',
+      'events.view',
+      'dashboard.view',
+    ]),
+    pages: ['dashboard', 'rooms', 'maintenance', 'events', 'architecture', 'settings'],
+    landingPage: 'maintenance',
   },
 };
 
-function getPermissions(role) {
-  return ROLE_PERMISSIONS[role] || null;
+function getPolicy(role) {
+  return POLICIES[role] || null;
 }
 
-function can(role, action) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return false;
-  return perms[action] === true;
+/** Front-end uchun xavfsiz siyosat ko'rinishi (Set -> Array) */
+function publicPolicy(role) {
+  const p = POLICIES[role];
+  if (!p) return null;
+  return {
+    role: p.role,
+    displayName: p.displayName,
+    description: p.description,
+    canSeeFinancials: p.canSeeFinancials,
+    canSeeStaffNames: p.canSeeStaffNames,
+    permissions: Array.from(p.permissions),
+    pages: p.pages,
+    landingPage: p.landingPage,
+  };
 }
 
-// ============================================================================
-// TOKEN BOSHQARUVI
-// ============================================================================
+// --------------------------------------------------------------------------
+// FAOL TOKENLAR (8 soat TTL)
+// --------------------------------------------------------------------------
 const tokens = new Map();
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 8;
 
@@ -139,12 +159,9 @@ function generateToken() {
 
 function login(username, password) {
   const user = USERS.find((u) => u.username === username);
-  if (!user) {
-    logger.warn(`[AUTH] Mavjud bo'lmagan foydalanuvchi urinishi: ${username}`);
-    return null;
-  }
-  if (user.passwordHash !== hashPassword(password)) {
-    logger.warn(`[AUTH] Noto'g'ri parol: ${username}`);
+  // Bir xil xato xabari — foydalanuvchi ro'yxati oshkor etilmasligi uchun
+  if (!user || user.passwordHash !== hashPassword(password)) {
+    logger.warn(`[AUTH] Muvaffaqiyatsiz kirish urinishi: ${username}`);
     return null;
   }
   const token = generateToken();
@@ -157,12 +174,8 @@ function login(username, password) {
   logger.info(`[AUTH] Tizimga kirdi: ${username} (${user.role})`);
   return {
     token,
-    user: {
-      username: user.username,
-      role: user.role,
-      displayName: user.displayName,
-      permissions: ROLE_PERMISSIONS[user.role],
-    },
+    user: { username: user.username, role: user.role, displayName: user.displayName },
+    policy: publicPolicy(user.role),
   };
 }
 
@@ -181,11 +194,11 @@ function logout(token) {
   return tokens.delete(token);
 }
 
-// ============================================================================
-// EXPRESS MIDDLEWARE LAR
-// ============================================================================
+// --------------------------------------------------------------------------
+// EXPRESS MIDDLEWARELARI
+// --------------------------------------------------------------------------
 
-/** Token tekshirish — har qanday himoyalangan endpoint uchun birinchi qadam */
+/** Token tekshiruvi */
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : header;
@@ -194,113 +207,95 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Avtorizatsiya talab qilinadi' });
   }
   req.session = session;
+  req.policy = POLICIES[session.role];
   next();
 }
 
-/**
- * Aniq harakat huquqini tekshiradi (masalan: canCheckIn).
- * Bu permission matritsasidan foydalanadi — yagona haqiqat manbai.
- *
- * Foydalanish:
- *   router.post('/reception/checkin', requireAuth, requirePermission('canCheckIn'), handler)
- */
-function requirePermission(action) {
+/** Ruxsat tekshiruvi (requireAuth dan keyin ishlatiladi) */
+function requirePermission(perm) {
   return (req, res, next) => {
-    if (!req.session) {
+    if (!req.policy) {
       return res.status(401).json({ error: 'Avtorizatsiya talab qilinadi' });
     }
-    if (!can(req.session.role, action)) {
-      logger.warn(`[AUTH] ${req.session.username} (${req.session.role}) "${action}" ga urinish qildi — RAD ETILDI`);
+    if (!req.policy.permissions.has(perm)) {
+      logger.warn(`[AUTH] Rad etildi: ${req.session.username} (${req.session.role}) -> ${perm}`);
       return res.status(403).json({
-        error: 'Bu amal sizning rolingiz uchun ruxsat etilmagan',
-        requiredPermission: action,
+        error: `Sizning rolingiz (${req.policy.displayName}) bu amalni bajara olmaydi`,
       });
     }
     next();
   };
 }
 
-/**
- * Aniq rollarga ruxsat beradi (oddiyroq variant).
- * Misol: requireRole('manager') — faqat menejer
- */
-function requireRole(...allowedRoles) {
-  return (req, res, next) => {
-    if (!req.session) {
-      return res.status(401).json({ error: 'Avtorizatsiya talab qilinadi' });
+// --------------------------------------------------------------------------
+// MA'LUMOTLARNI ROL BO'YICHA TOZALASH
+//
+// Narxlar, hisob-kitob ma'lumotlari va statistika faqat moliyaviy
+// ko'rish huquqi bor rollarga (manager, reception) yuboriladi. Boshqalar
+// uchun bu maydonlar javobdan olib tashlanadi.
+// --------------------------------------------------------------------------
+function sanitizeForRole(data, role) {
+  const policy = POLICIES[role];
+  if (!policy) return data;
+  if (policy.canSeeFinancials) return data;
+
+  // Chuqur nusxa olib, narxlarni olib tashlaymiz
+  const cleaned = JSON.parse(JSON.stringify(data));
+
+  // 1. Xonalardan tunlik narxni olib tashlash
+  if (Array.isArray(cleaned.rooms)) {
+    cleaned.rooms.forEach((r) => {
+      delete r.nightlyRate;
+    });
+  }
+
+  // 2. Buyurtmalardan to'lov ma'lumotlarini olib tashlash
+  const stripOrder = (o) => {
+    if (!o) return;
+    delete o.total;
+    if (Array.isArray(o.items)) {
+      o.items.forEach((i) => {
+        delete i.unitPrice;
+        delete i.lineTotal;
+      });
     }
-    if (!allowedRoles.includes(req.session.role)) {
-      logger.warn(`[AUTH] ${req.session.username} (${req.session.role}) "${req.originalUrl}" ga urinish qildi — RAD ETILDI`);
-      return res.status(403).json({ error: 'Bu sahifa sizning rolingiz uchun ruxsat etilmagan' });
-    }
-    next();
   };
-}
+  if (Array.isArray(cleaned.activeOrders)) cleaned.activeOrders.forEach(stripOrder);
+  if (Array.isArray(cleaned.orders)) cleaned.orders.forEach(stripOrder);
 
-// ============================================================================
-// MA'LUMOTLARNI ROL BO'YICHA TOZALASH (defense in depth)
-// Backend hech qachon narxlarni ruxsat etilmagan rolga yubormaydi —
-// hatto frontend bug bo'lsa ham, ma'lumot tashqariga chiqmaydi.
-// ============================================================================
+  // 3. Menyu narxlarini olib tashlash
+  if (Array.isArray(cleaned.menu)) {
+    cleaned.menu.forEach((m) => { delete m.price; });
+  }
 
-function sanitizeRoomForRole(room, role) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return null;
-  const safe = { ...room };
-  if (!perms.seePrices) {
-    delete safe.nightlyRate;
+  // 4. Daromad statistikasini olib tashlash
+  if (cleaned.stats) {
+    delete cleaned.stats.totalRevenue;
   }
-  if (!perms.seeGuestNames && safe.occupiedBy) {
-    // occupiedBy ID — uni saqlaymiz (anonim), lekin guest tafsilotini bermaymiz
-  }
-  return safe;
-}
 
-function sanitizeGuestForRole(guest, role) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return null;
-  if (!perms.seeGuestNames) {
-    // Ism o'rniga inisiallarni ko'rsatamiz (xavfsizlik)
-    const initials = (guest.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase();
-    return {
-      id: guest.id,
-      roomNumber: guest.roomNumber,
-      initials,
-      checkInAt: guest.checkInAt,
-      nights: guest.nights,
-    };
+  // 5. Mehmon qo'shimcha to'lovlarini olib tashlash
+  if (Array.isArray(cleaned.guests)) {
+    cleaned.guests.forEach((g) => {
+      if (Array.isArray(g.extraCharges)) g.extraCharges = [];
+    });
   }
-  return guest;
-}
 
-function sanitizeOrderForRole(order, role) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return null;
-  if (!perms.seePrices) {
-    // Narxsiz versiya
-    const safe = { ...order };
-    delete safe.total;
-    safe.items = (order.items || []).map((it) => ({
-      itemId: it.itemId, name: it.name, quantity: it.quantity,
-      // unitPrice va lineTotal olib tashlanadi
-    }));
-    return safe;
-  }
-  return order;
+  return cleaned;
 }
 
 module.exports = {
+  // autentifikatsiya
   login,
   logout,
   validateToken,
   requireAuth,
-  requireRole,
+  // ruxsatlar
   requirePermission,
-  can,
-  getPermissions,
-  sanitizeRoomForRole,
-  sanitizeGuestForRole,
-  sanitizeOrderForRole,
-  ROLE_PERMISSIONS,
+  getPolicy,
+  publicPolicy,
+  POLICIES,
+  // ma'lumotlarni tozalash
+  sanitizeForRole,
+  // test foydasi uchun
   _users: USERS,
 };
