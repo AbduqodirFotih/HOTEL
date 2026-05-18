@@ -22,11 +22,12 @@ npm start
 
 Brauzeringizda **<http://localhost:3000>** ni oching va quyidagi hisoblardan biri bilan kiring:
 
-| Foydalanuvchi    | Parol                | Rol           |
-|------------------|----------------------|---------------|
-| `admin`          | `admin123`           | Bosh menejer  |
-| `reception`      | `reception123`       | Qabul         |
-| `housekeeping`   | `housekeeping123`    | Tozalash      |
+| Foydalanuvchi     | Parol                | Rol           | Kirish nimaga ruxsat etiladi                     |
+|-------------------|----------------------|---------------|---------------------------------------------------|
+| `admin`           | `admin123`           | Bosh menejer  | Hamma sahifa, hamma operatsiya, statistika, sozlamalar |
+| `reception`       | `reception123`       | Qabul         | Check-in/out, buyurtmalar, mehmonlar, narxlar    |
+| `housekeeping`    | `housekeeping123`    | Tozalash      | Faqat tozalash navbati va vaqt o'lchagichlar     |
+| `maintenance`     | `maintenance123`     | Texnik xodim  | Faqat texnik xizmat so'rovlari (ustuvorlik navbati) |
 
 > **Testlarni ishga tushirish:** `npm test` — 8 ta avtomatik test stsenariy
 > (TS-01 → TS-08) ketma-ket bajariladi va natijalar terminalda ko'rsatiladi.
@@ -157,14 +158,41 @@ Hozirgi natija: **8/8 muvaffaqiyatli** ✓
 
 ## 🔐 Xavfsizlik
 
+### Rolga Asoslangan Kirish Nazorati (RBAC)
+
+Tizimda 4 ta rol. Har biri o'z bo'limining doirasida ishlaydi. Backend HAR DOIM rolni qayta tekshiradi — hatto frontend xato qilsa yoki foydalanuvchi to'g'ridan-to'g'ri API ga so'rov yuborsa ham, ruxsatsiz amal **403 Forbidden** bilan rad etiladi.
+
+| Imkoniyat / Sahifa             | Bosh Menejer | Qabul | Tozalash | Texnik |
+|--------------------------------|:---:|:---:|:---:|:---:|
+| Dashboard (rolga moslashtirilgan) | ✓ | ✓ | ✓ | ✓ |
+| Xonalarni ko'rish              | ✓ | ✓ | ✓ | ✓ |
+| **Narxlarni ko'rish**          | ✓ | ✓ | ❌ | ❌ |
+| **Mehmon ismini ko'rish**      | ✓ | ✓ | ❌ (anonim AK) | ❌ (anonim AK) |
+| Check-in / Check-out qilish    | ✓ | ✓ | ❌ | ❌ |
+| Buyurtma yaratish              | ✓ | ✓ | ❌ | ❌ |
+| Buyurtma holatini o'zgartirish | ✓ | ✓ | ❌ | ❌ |
+| Menyu va narxlarni ko'rish     | ✓ | ✓ | ❌ | ❌ |
+| Tozalashni boshlash/yakunlash  | ✓ | ❌ | ✓ | ❌ |
+| Texnik xizmat so'rovi yuborish | ✓ | ✓ | ✓ | ✓ |
+| Texnik xizmat so'rovini hal qilish | ✓ | ❌ | ❌ | ✓ |
+| Daromad statistikasi           | ✓ | ❌ | ❌ | ❌ |
+| Test stsenariylari ishga tushirish | ✓ | ❌ | ❌ | ❌ |
+| Hodisa jurnali (broker log)    | ✓ | ❌ | ❌ | ❌ |
+| Sozlamalarni o'zgartirish      | ✓ | ❌ | ❌ | ❌ |
+| Ma'lumotlarni qayta tiklash    | ✓ | ❌ | ❌ | ❌ |
+
+**Ikki qatlam himoya:** har bir API endpoint avval `requireAuth` (token), keyin `requirePermission` (aniq harakat huquqi) tekshiradi. Ma'lumotlar darajasida — `sanitizeRoomForRole()`, `sanitizeGuestForRole()`, `sanitizeOrderForRole()` funksiyalari rolga ruxsat etilmagan maydonlarni javobdan olib tashlaydi. WebSocket xabarlari ham har bir mijozga uning roligaga moslab tozalanadi.
+
+### Boshqa xavfsizlik amallari
+
 | Talab              | Implementation                                                          |
 |--------------------|-------------------------------------------------------------------------|
 | Autentifikatsiya   | Token asosida, 8 soat TTL, SHA-256 + tuz bilan shifrlangan parol        |
-| Avtorizatsiya      | Rol asosida (manager / reception / housekeeping)                        |
+| Avtorizatsiya      | Rolga asoslangan, yagona huquq matritsasi (`ROLE_PERMISSIONS`)          |
 | Kiritishni tekshirish | Markaziy validator (XSS, uzunlik, tur, oraliq tekshiruvi)            |
 | Xato boshqaruvi    | Stek izlari oshkor etilmaydi — umumlashtirilgan xato xabarlari          |
-| WebSocket xavfsizligi | Faqat tokenlashtirilgan ulanishlar xabarlarni qabul qiladi           |
-| Maxfiyligi         | WebSocket orqali mehmon ismlari **bosh harf**lar bilan almashtiriladi  |
+| WebSocket xavfsizligi | Faqat tokenlashtirilgan ulanishlar + har mijoz uchun rol bo'yicha filtr |
+| Login enumeration  | Yagona xato xabari (foydalanuvchi yo'q yoki parol noto'g'ri farqlanmaydi) |
 | HTTP sarlavhalari  | X-Content-Type-Options, X-Frame-Options, Referrer-Policy                |
 | Body chegarasi     | 32 KB (DoS himoyasi)                                                    |
 
