@@ -20,15 +20,18 @@
 
   // ===========================================================================
   // ROL VA HUQUQ YORDAMCHILARI
-  // Frontend backend bilan bir xil huquq matritsasidan foydalanadi (sessiyada
-  // saqlangan permissions obyekti). Backend HAR DOIM yana qayta tekshiradi —
-  // bu yerdagi tekshiruvlar faqat UI uchun.
+  // Frontend backend bilan bir xil huquq matritsasidan foydalanadi. Policy
+  // login paytida olinadi va localStorage da saqlanadi. Backend HAR DOIM yana
+  // qayta tekshiradi — bu yerdagi tekshiruvlar faqat UI tajribasi uchun.
   // ===========================================================================
-  const currentUser = () => API._auth.getUser() || { role: 'guest', permissions: {} };
-  const perms = () => currentUser().permissions || {};
-  const can = (action) => perms()[action] === true;
-  const seePrices = () => perms().seePrices === true;
-  const seeGuestNames = () => perms().seeGuestNames === true;
+  const policy = () => window.HotelOS.currentPolicy
+    || API._auth.getPolicy()
+    || { permissions: [], pages: [], canSeeFinancials: false, canSeeStaffNames: false, role: 'guest', displayName: 'Mehmon' };
+  const currentUser = () => window.HotelOS.currentUser || API._auth.getUser() || { role: 'guest', username: '?', displayName: '?' };
+  const can = (perm) => (policy().permissions || []).includes(perm);
+  const seePrices = () => policy().canSeeFinancials === true;
+  const seeGuestNames = () => policy().canSeeStaffNames !== false; // default ko'rsatamiz, faqat aniq false bo'lsa yashiramiz
+  const userRole = () => currentUser().role || 'guest';
 
   // Narxni rol bo'yicha ko'rsatish/yashirish yordamchisi
   const priceOrHidden = (amount) => seePrices() ? fmtUZS(amount) : '<span class="text-muted">—</span>';
@@ -1240,7 +1243,45 @@
     try { s = (await API.settings()).settings; }
     catch (err) { UI.toast(err.message, { severity: 'danger' }); return; }
 
+    const pol = policy();
+    const canEdit = can('settings.update');
+    const canReset = can('settings.reset');
+
+    // Rol uchun ruxsat etilgan amallarning insonga qulay tavsifi
+    const friendlyPerms = describePermissions(pol);
+
     container.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">👤</span> Mening Rolim va Huquqlarim</h3>
+          <span class="status-pill priority-${pol.role === 'manager' ? 'critical' : pol.role === 'reception' ? 'high' : 'normal'}">${esc(pol.displayName || pol.role)}</span>
+        </div>
+        <div class="card-body">
+          <div style="margin-bottom:14px;color:var(--text-secondary);font-size:14px">${esc(pol.description || '')}</div>
+          <div class="form-hint" style="margin-bottom:12px"><b>Foydalanuvchi:</b> ${esc(currentUser().username)} · <b>Rol:</b> ${esc(pol.role)}</div>
+          <table class="table" style="margin-top:8px">
+            <thead><tr><th>Imkoniyat</th><th style="width:120px">Holat</th></tr></thead>
+            <tbody>
+              ${friendlyPerms.map((p) => `
+                <tr>
+                  <td>${esc(p.label)}</td>
+                  <td>${p.allowed ? '<span class="status-pill status-clean">✓ Ruxsat</span>' : '<span class="status-pill priority-low">✕ Yo\'q</span>'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      ${!canEdit ? `
+        <div class="card" style="border-left:4px solid var(--warning)">
+          <div class="card-body">
+            <div class="font-semibold" style="margin-bottom:4px">⚠ Faqat ko'rish rejimi</div>
+            <div class="text-sm text-muted">Sizning rolingiz tizim sozlamalarini o'zgartirishga ruxsat etilmagan. Ma'muriy o'zgarishlar kerak bo'lsa, bosh menejerga murojaat qiling.</div>
+          </div>
+        </div>
+      ` : ''}
+
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">Tozalash Tartibi</h3>
@@ -1251,21 +1292,21 @@
               <div class="settings-label-title">Tozalash chastotasi (soatda)</div>
               <div class="settings-label-desc">Xonalar shu vaqtdan ko'p tozalanmagan bo'lsa, avtomatik bildirishnoma yuboriladi. Standart: 12 soat.</div>
             </div>
-            <input class="form-input" type="number" min="1" max="72" id="set-cleaning-hours" value="${s.cleaningThresholdHours}" style="width:100px;text-align:center">
+            <input class="form-input" type="number" min="1" max="72" id="set-cleaning-hours" value="${s.cleaningThresholdHours}" style="width:100px;text-align:center" ${canEdit ? '' : 'disabled'}>
           </div>
           <div class="settings-row">
             <div>
               <div class="settings-label-title">Avtomatik tozalovchi xabarnomasi</div>
               <div class="settings-label-desc">12 soatdan oshganda tozalovchini avtomatik xabardor qilish va xonani navbatga qo'shish</div>
             </div>
-            <label class="toggle"><input type="checkbox" id="set-auto-notify" ${s.autoNotifyHousekeeping ? 'checked' : ''}><span class="toggle-slider"></span></label>
+            <label class="toggle"><input type="checkbox" id="set-auto-notify" ${s.autoNotifyHousekeeping ? 'checked' : ''} ${canEdit ? '' : 'disabled'}><span class="toggle-slider"></span></label>
           </div>
           <div class="settings-row">
             <div>
               <div class="settings-label-title">Xona vaqt o'lchagichini ko'rsatish</div>
               <div class="settings-label-desc">Har bir xona kartochkasida "tozalanganiga / iflosligiga" vaqtlarni ko'rsatish</div>
             </div>
-            <label class="toggle"><input type="checkbox" id="set-show-timers" ${s.showRoomTimers ? 'checked' : ''}><span class="toggle-slider"></span></label>
+            <label class="toggle"><input type="checkbox" id="set-show-timers" ${s.showRoomTimers ? 'checked' : ''} ${canEdit ? '' : 'disabled'}><span class="toggle-slider"></span></label>
           </div>
         </div>
       </div>
@@ -1280,14 +1321,14 @@
               <div class="settings-label-title">Ovoz</div>
               <div class="settings-label-desc">Yangi bildirishnoma kelganida brauzer signal chiqarsin</div>
             </div>
-            <label class="toggle"><input type="checkbox" id="set-sound" ${s.notificationSound ? 'checked' : ''}><span class="toggle-slider"></span></label>
+            <label class="toggle"><input type="checkbox" id="set-sound" ${s.notificationSound ? 'checked' : ''} ${canEdit ? '' : 'disabled'}><span class="toggle-slider"></span></label>
           </div>
           <div class="settings-row">
             <div>
               <div class="settings-label-title">Avtomatik yangilanish (sekund)</div>
               <div class="settings-label-desc">Panel real vaqtli WebSocket dan tashqari shu intervalda ham yangilanadi</div>
             </div>
-            <input class="form-input" type="number" min="2" max="120" id="set-refresh" value="${s.autoRefreshSec}" style="width:100px;text-align:center">
+            <input class="form-input" type="number" min="2" max="120" id="set-refresh" value="${s.autoRefreshSec}" style="width:100px;text-align:center" ${canEdit ? '' : 'disabled'}>
           </div>
         </div>
       </div>
@@ -1302,7 +1343,7 @@
               <div class="settings-label-title">Til</div>
               <div class="settings-label-desc">Foydalanuvchi interfeysi tili</div>
             </div>
-            <select class="form-select" id="set-language" style="width:160px">
+            <select class="form-select" id="set-language" style="width:160px" ${canEdit ? '' : 'disabled'}>
               <option value="uz" ${s.language === 'uz' ? 'selected' : ''}>O'zbekcha</option>
               <option value="ru" ${s.language === 'ru' ? 'selected' : ''}>Русский</option>
               <option value="en" ${s.language === 'en' ? 'selected' : ''}>English</option>
@@ -1313,7 +1354,7 @@
               <div class="settings-label-title">Mavzu (tema)</div>
               <div class="settings-label-desc">Faqat ochiq mavzu mavjud (premium light)</div>
             </div>
-            <select class="form-select" id="set-theme" style="width:160px">
+            <select class="form-select" id="set-theme" style="width:160px" ${canEdit ? '' : 'disabled'}>
               <option value="light" selected>Ochiq (Default)</option>
               <option value="cream">Krem</option>
             </select>
@@ -1323,7 +1364,7 @@
               <div class="settings-label-title">Zichlik</div>
               <div class="settings-label-desc">Elementlar orasidagi bo'sh joy</div>
             </div>
-            <select class="form-select" id="set-density" style="width:160px">
+            <select class="form-select" id="set-density" style="width:160px" ${canEdit ? '' : 'disabled'}>
               <option value="comfortable" ${s.density === 'comfortable' ? 'selected' : ''}>Qulay (Default)</option>
               <option value="compact" ${s.density === 'compact' ? 'selected' : ''}>Zich</option>
             </select>
@@ -1333,11 +1374,12 @@
               <div class="settings-label-title">Panelda hodisa jurnalini ko'rsatish</div>
               <div class="settings-label-desc">Dashboard sahifasida jonli hodisalar kartochkasini ko'rsatish</div>
             </div>
-            <label class="toggle"><input type="checkbox" id="set-dashboard-events" ${s.dashboardShowEvents ? 'checked' : ''}><span class="toggle-slider"></span></label>
+            <label class="toggle"><input type="checkbox" id="set-dashboard-events" ${s.dashboardShowEvents ? 'checked' : ''} ${canEdit ? '' : 'disabled'}><span class="toggle-slider"></span></label>
           </div>
         </div>
       </div>
 
+      ${seePrices() ? `
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">Pul Birligi</h3>
@@ -1348,25 +1390,26 @@
               <div class="settings-label-title">Valyuta</div>
               <div class="settings-label-desc">Barcha narxlar shu birlikda ko'rsatiladi</div>
             </div>
-            <select class="form-select" id="set-currency" style="width:160px">
+            <select class="form-select" id="set-currency" style="width:160px" disabled>
               <option value="UZS" selected>UZS (so'm)</option>
             </select>
           </div>
         </div>
-      </div>
+      </div>` : ''}
 
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">Saqlash va Tizim</h3>
         </div>
         <div class="card-body">
+          ${canEdit ? `
           <div class="settings-row">
             <div>
               <div class="settings-label-title">Sozlamalarni saqlash</div>
               <div class="settings-label-desc">Yuqoridagi o'zgarishlarni serverga yuborish</div>
             </div>
             <button class="btn btn-primary" id="save-settings">💾 Saqlash</button>
-          </div>
+          </div>` : ''}
           <div class="settings-row">
             <div>
               <div class="settings-label-title">Ma'lumotlarni eksport qilish</div>
@@ -1374,33 +1417,36 @@
             </div>
             <button class="btn btn-ghost" id="export-data">⬇ Yuklab olish</button>
           </div>
+          ${canReset ? `
           <div class="settings-row">
             <div>
               <div class="settings-label-title">Barcha ma'lumotlarni qayta tiklash</div>
               <div class="settings-label-desc">DIQQAT: Barcha mehmonlar, buyurtmalar, so'rovlar o'chiriladi. Faqat menejer.</div>
             </div>
             <button class="btn btn-danger" id="reset-data">⚠ Qayta tiklash</button>
-          </div>
+          </div>` : ''}
         </div>
       </div>
     `;
 
-    $('#save-settings').addEventListener('click', async () => {
-      const patch = {
-        cleaningThresholdHours: parseInt($('#set-cleaning-hours').value, 10),
-        autoNotifyHousekeeping: $('#set-auto-notify').checked,
-        notificationSound: $('#set-sound').checked,
-        showRoomTimers: $('#set-show-timers').checked,
-        autoRefreshSec: parseInt($('#set-refresh').value, 10),
-        language: $('#set-language').value,
-        density: $('#set-density').value,
-        dashboardShowEvents: $('#set-dashboard-events').checked,
-      };
-      try {
-        await API.updateSettings(patch);
-        UI.toast('Sozlamalar saqlandi', { severity: 'success' });
-      } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
-    });
+    if (canEdit) {
+      $('#save-settings').addEventListener('click', async () => {
+        const patch = {
+          cleaningThresholdHours: parseInt($('#set-cleaning-hours').value, 10),
+          autoNotifyHousekeeping: $('#set-auto-notify').checked,
+          notificationSound: $('#set-sound').checked,
+          showRoomTimers: $('#set-show-timers').checked,
+          autoRefreshSec: parseInt($('#set-refresh').value, 10),
+          language: $('#set-language').value,
+          density: $('#set-density').value,
+          dashboardShowEvents: $('#set-dashboard-events').checked,
+        };
+        try {
+          await API.updateSettings(patch);
+          UI.toast('Sozlamalar saqlandi', { severity: 'success' });
+        } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
+      });
+    }
 
     $('#export-data').addEventListener('click', async () => {
       try {
@@ -1414,16 +1460,35 @@
       } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
     });
 
-    $('#reset-data').addEventListener('click', async () => {
-      if (!confirm('Barcha ma\'lumotlar urug\'lik holatiga qaytadi. Davom etilsinmi?')) return;
-      try {
-        await API.resetData();
-        UI.toast('Ma\'lumotlar qayta tiklandi', { severity: 'warning' });
-        setTimeout(() => location.reload(), 800);
-      } catch (err) {
-        UI.toast(err.message, { severity: 'danger', title: 'Ruxsat yo\'q' });
-      }
-    });
+    if (canReset) {
+      $('#reset-data').addEventListener('click', async () => {
+        if (!confirm('Barcha ma\'lumotlar urug\'lik holatiga qaytadi. Davom etilsinmi?')) return;
+        try {
+          await API.resetData();
+          UI.toast('Ma\'lumotlar qayta tiklandi', { severity: 'warning' });
+          setTimeout(() => location.reload(), 800);
+        } catch (err) {
+          UI.toast(err.message, { severity: 'danger', title: 'Ruxsat yo\'q' });
+        }
+      });
+    }
+  }
+
+  /** Foydalanuvchiga rolining huquqlarini insonga qulay tilda tushuntirish */
+  function describePermissions(pol) {
+    const has = (p) => (pol.permissions || []).includes(p);
+    return [
+      { label: 'Mehmonni check-in qilish',                  allowed: has('reception.checkin') },
+      { label: 'Mehmonni check-out qilish va hisob ko\'rish', allowed: has('reception.checkout') },
+      { label: 'Tozalash boshlash va yakunlash',              allowed: has('housekeeping.start') && has('housekeeping.complete') },
+      { label: 'Xona xizmati buyurtmalarini yaratish',        allowed: has('orders.create') },
+      { label: 'Texnik xizmat so\'rovi yaratish',             allowed: has('maintenance.report') },
+      { label: 'Texnik xizmat so\'rovini hal etish',          allowed: has('maintenance.resolve') },
+      { label: 'Narxlar va daromadlarni ko\'rish',            allowed: pol.canSeeFinancials === true },
+      { label: 'Test stsenariylarini ishga tushirish',        allowed: has('tests.run') },
+      { label: 'Tizim sozlamalarini o\'zgartirish',           allowed: has('settings.update') },
+      { label: 'Barcha ma\'lumotlarni qayta tiklash',          allowed: has('settings.reset') },
+    ];
   }
 
   // ===========================================================================
