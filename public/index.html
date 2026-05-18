@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="HotelOS - Real-Time Hotel Management System">
+  <meta name="description" content="HotelOS — Real Vaqtli Mehmonxona Boshqaruv Tizimi">
   <title>HotelOS — GrandStay Hotel</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,7 +24,9 @@
     </div>
     <h1 class="hero-title">Real vaqtli mehmonxona boshqaruv tizimi</h1>
     <p class="hero-subtitle">
-      GrandStay Hotel ning to'rt bo'limini bitta platformada birlashtirgan, mikroservis arxitekturasi va WebSocket asosida qurilgan zamonaviy boshqaruv yechimi.
+      GrandStay Hotelning to'rt bo'limini bitta platformada birlashtirgan,
+      mikroservis arxitekturasi va rolga asoslangan kirish nazorati bilan
+      ta'minlangan zamonaviy boshqaruv yechimi.
     </p>
     <div class="hero-features">
       <div class="hero-feature">
@@ -35,24 +37,24 @@
         </div>
       </div>
       <div class="hero-feature">
-        <div class="hero-feature-icon">📡</div>
+        <div class="hero-feature-icon">🔐</div>
         <div class="hero-feature-text">
-          <span class="hero-feature-title">Real vaqtli</span>
-          WebSocket orqali jonli yangilanishlar
+          <span class="hero-feature-title">RBAC xavfsizlik</span>
+          Har rol faqat o'z bo'limini ko'radi
         </div>
       </div>
       <div class="hero-feature">
-        <div class="hero-feature-icon">🔐</div>
+        <div class="hero-feature-icon">📡</div>
         <div class="hero-feature-text">
-          <span class="hero-feature-title">Xavfsiz</span>
-          Rolga asoslangan kirish nazorati
+          <span class="hero-feature-title">Real vaqtli</span>
+          WebSocket orqali jonli yangilanish
         </div>
       </div>
       <div class="hero-feature">
         <div class="hero-feature-icon">✓</div>
         <div class="hero-feature-text">
           <span class="hero-feature-title">8 Test stsenariy</span>
-          Avtomatlashtirilgan tekshiruv
+          Avtomatik tekshiruv
         </div>
       </div>
     </div>
@@ -61,12 +63,12 @@
   <div class="login-form-wrap">
     <div class="login-form">
       <h2>Tizimga kirish</h2>
-      <p class="login-form-subtitle">GrandStay Hotel operatsiyalar paneliga xush kelibsiz</p>
+      <p class="login-form-subtitle">GrandStay Hotel operatsiyalar paneli</p>
 
       <form id="login-form">
         <div class="form-group">
           <label class="form-label">Foydalanuvchi nomi</label>
-          <input type="text" class="form-input" id="login-username" placeholder="manager" autocomplete="username" required>
+          <input type="text" class="form-input" id="login-username" placeholder="admin" autocomplete="username" required>
         </div>
         <div class="form-group">
           <label class="form-label">Parol</label>
@@ -79,14 +81,17 @@
       <div class="demo-accounts">
         <h4>Demo hisoblar (bosing — avtomatik to'ldiriladi)</h4>
         <div class="demo-accounts-grid">
-          <button type="button" class="demo-account" data-user="admin" data-pass="admin123">
+          <button type="button" class="demo-account role-manager" data-user="admin" data-pass="admin123">
             <span class="demo-account-role">Bosh Menejer</span>admin / admin123
           </button>
-          <button type="button" class="demo-account" data-user="reception" data-pass="reception123">
+          <button type="button" class="demo-account role-reception" data-user="reception" data-pass="reception123">
             <span class="demo-account-role">Qabul</span>reception / reception123
           </button>
-          <button type="button" class="demo-account" data-user="housekeeping" data-pass="housekeeping123">
+          <button type="button" class="demo-account role-housekeeping" data-user="housekeeping" data-pass="housekeeping123">
             <span class="demo-account-role">Tozalash</span>housekeeping / housekeeping123
+          </button>
+          <button type="button" class="demo-account role-maintenance" data-user="maintenance" data-pass="maintenance123">
+            <span class="demo-account-role">Texnik Xizmat</span>maintenance / maintenance123
           </button>
         </div>
       </div>
@@ -99,34 +104,14 @@
      ============================================================ -->
 <div id="view-app" class="app-layout hidden">
 
-  <!-- Sidebar -->
+  <!-- Sidebar (dynamically built by app.js based on role) -->
   <aside class="sidebar">
     <div class="sidebar-brand">
       <div class="brand-logo">H</div>
       <div class="brand-name">HotelOS</div>
     </div>
 
-    <div class="nav-section">
-      <div class="nav-section-label">Operatsiyalar</div>
-      <button class="nav-item active" data-page="dashboard"><span class="nav-item-icon">▦</span> Dashboard</button>
-      <button class="nav-item" data-page="rooms"><span class="nav-item-icon">▢</span> Xonalar</button>
-      <button class="nav-item" data-page="reception"><span class="nav-item-icon">⊙</span> Qabul</button>
-      <button class="nav-item" data-page="housekeeping"><span class="nav-item-icon">✦</span> Tozalash</button>
-      <button class="nav-item" data-page="orders"><span class="nav-item-icon">◇</span> Buyurtmalar</button>
-      <button class="nav-item" data-page="maintenance"><span class="nav-item-icon">⚒</span> Texnik xizmat</button>
-    </div>
-
-    <div class="nav-section">
-      <div class="nav-section-label">Tahlil</div>
-      <button class="nav-item" data-page="tests"><span class="nav-item-icon">⚐</span> Test Stsenariylari</button>
-      <button class="nav-item" data-page="events"><span class="nav-item-icon">⌬</span> Hodisa Jurnali</button>
-      <button class="nav-item" data-page="architecture"><span class="nav-item-icon">⊞</span> Arxitektura</button>
-    </div>
-
-    <div class="nav-section">
-      <div class="nav-section-label">Tizim</div>
-      <button class="nav-item" data-page="settings"><span class="nav-item-icon">⚙</span> Sozlamalar</button>
-    </div>
+    <nav id="sidebar-nav"><!-- nav items injected here --></nav>
 
     <div class="sidebar-footer">
       <div class="user-card">
@@ -142,13 +127,13 @@
 
   <!-- Main content area -->
   <main class="main-content" id="main-content">
-    <!-- Topbar -->
     <header class="topbar" id="topbar">
       <div class="topbar-left">
         <h1 class="page-title" id="page-title">Dashboard</h1>
         <p class="page-subtitle" id="page-subtitle">Operatsiyalar haqida umumiy ko'rinish</p>
       </div>
       <div class="topbar-right">
+        <div class="role-chip" id="role-chip" title="Joriy rolingiz">Rol</div>
         <div class="connection-indicator" id="ws-indicator">
           <span class="live-dot"></span> Ulanmoqda...
         </div>
@@ -159,7 +144,6 @@
       </div>
     </header>
 
-    <!-- Page content -->
     <div id="page-content"></div>
   </main>
 </div>
@@ -179,7 +163,6 @@
   </div>
 </div>
 
-<!-- WebSocket ulanishi ui.js ichida o'rnatiladi (kutubxonalarsiz) -->
 <script src="/js/api.js"></script>
 <script src="/js/ui.js"></script>
 <script src="/js/pages.js"></script>

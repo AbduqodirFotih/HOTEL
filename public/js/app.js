@@ -1,36 +1,76 @@
 /**
- * app.js — Asosiy SPA boshqaruvchisi.
+ * app.js — SPA boshqaruvchisi (rolga asoslangan)
  * ============================================================================
- * Vazifalari:
- *   - Login formani boshqarish
- *   - Tizimga kirgan foydalanuvchini saqlash (localStorage)
- *   - Sahifalar o'rtasida marshrutlash (#hash-asosida)
- *   - WebSocket ulanishini boshqarish
- *   - Bildirishnomalarni ko'rsatish
- *   - Hodisalar kelganida tegishli sahifani yangilash
+ *   - Login
+ *   - Roldan kelib chiqib sidebar va boshlang'ich sahifa
+ *   - Sahifalararo marshrutlash (#hash)
+ *   - WebSocket ulanishi
+ *   - Bildirishnoma paneli
+ *   - Ruxsat etilmagan sahifalarga kirishni rad etish
  * ============================================================================
  */
 'use strict';
 
 (function () {
   const { API, UI, Pages } = window.HotelOS;
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
 
-  const PAGE_TITLES = {
-    dashboard:    { title: 'Dashboard',          subtitle: 'Operatsiyalar haqida umumiy ko\'rinish' },
-    rooms:        { title: 'Xonalar',            subtitle: 'Inventar va tozalik holati' },
-    reception:    { title: 'Qabul',              subtitle: 'Check-in / Check-out boshqaruvi' },
-    housekeeping: { title: 'Tozalash',           subtitle: 'Tozalash navbati va 12-soatlik tsikl' },
-    orders:       { title: 'Xona Xizmati',       subtitle: 'Ovqat va ichimlik buyurtmalari' },
-    maintenance:  { title: 'Texnik Xizmat',      subtitle: 'Ustuvorlik navbati' },
-    tests:        { title: 'Test Stsenariylari', subtitle: 'TS-01 — TS-08 avtomatik testlari' },
-    events:       { title: 'Hodisa Jurnali',     subtitle: 'Xabar brokeri jonli oqimi' },
-    architecture: { title: 'Arxitektura',        subtitle: 'Tizim tuzilishi va ma\'lumotlar tuzilmalari' },
-    settings:     { title: 'Sozlamalar',         subtitle: 'Tizim parametrlarini moslash' },
+  // Sahifa metadata
+  const PAGE_META = {
+    dashboard:    { title: 'Dashboard',         subtitle: 'Operatsiyalar haqida umumiy ko\'rinish', icon: '▦' },
+    rooms:        { title: 'Xonalar',           subtitle: 'Inventar va tozalik holati', icon: '▢' },
+    reception:    { title: 'Qabul',             subtitle: 'Check-in / Check-out boshqaruvi', icon: '⊙' },
+    housekeeping: { title: 'Tozalash',          subtitle: 'Tozalash navbati va 12-soatlik tsikl', icon: '✦' },
+    orders:       { title: 'Xona Xizmati',      subtitle: 'Ovqat va ichimlik buyurtmalari', icon: '◇' },
+    maintenance:  { title: 'Texnik Xizmat',     subtitle: 'Ustuvorlik navbati', icon: '⚒' },
+    tests:        { title: 'Test Stsenariylari',subtitle: 'TS-01 — TS-08 avtomatik testlari', icon: '⚐' },
+    events:       { title: 'Hodisa Jurnali',    subtitle: 'Xabar brokeri jonli oqimi', icon: '⌬' },
+    architecture: { title: 'Arxitektura',       subtitle: 'Tizim tuzilishi va ma\'lumotlar tuzilmalari', icon: '⊞' },
+    settings:     { title: 'Sozlamalar',        subtitle: 'Tizim parametrlarini moslash', icon: '⚙' },
+  };
+
+  // Har bir rol uchun ruxsat etilgan sahifalar va boshlang'ich sahifa
+  const ROLE_PAGES = {
+    manager: {
+      home: 'dashboard',
+      sections: [
+        { label: 'Operatsiyalar', pages: ['dashboard', 'rooms', 'reception', 'housekeeping', 'orders', 'maintenance'] },
+        { label: 'Tahlil', pages: ['tests', 'events', 'architecture'] },
+        { label: 'Tizim', pages: ['settings'] },
+      ],
+    },
+    reception: {
+      home: 'reception',
+      sections: [
+        { label: 'Operatsiyalar', pages: ['dashboard', 'reception', 'rooms', 'orders', 'maintenance'] },
+      ],
+    },
+    housekeeping: {
+      home: 'housekeeping',
+      sections: [
+        { label: 'Operatsiyalar', pages: ['dashboard', 'housekeeping', 'rooms', 'maintenance'] },
+      ],
+    },
+    maintenance: {
+      home: 'maintenance',
+      sections: [
+        { label: 'Operatsiyalar', pages: ['dashboard', 'maintenance', 'rooms'] },
+      ],
+    },
+  };
+
+  // Rol nomlarini chiroyli ko'rsatish
+  const ROLE_DISPLAY = {
+    manager: 'Bosh Menejer',
+    reception: 'Qabul Xodimi',
+    housekeeping: 'Tozalash Xodimi',
+    maintenance: 'Texnik Xodim',
   };
 
   let currentPage = 'dashboard';
+  let currentRole = 'manager';
+  let allowedPagesSet = new Set();
   let wsConn = null;
   let refreshTimer = null;
   let unreadCount = 0;
@@ -58,7 +98,6 @@
       }
     });
 
-    // Demo hisob tugmalari
     $$('.demo-account').forEach((btn) => {
       btn.addEventListener('click', () => {
         $('#login-username').value = btn.dataset.user;
@@ -69,23 +108,35 @@
   }
 
   // ===========================================================================
-  // MAIN APP
+  // MAIN APP — rolga qarab UI ni qurish
   // ===========================================================================
   function showApp(user) {
+    currentRole = user.role;
+    const roleConfig = ROLE_PAGES[currentRole] || ROLE_PAGES.manager;
+
+    // Ruxsat etilgan sahifalarni hisoblash
+    allowedPagesSet = new Set();
+    for (const section of roleConfig.sections) {
+      for (const p of section.pages) allowedPagesSet.add(p);
+    }
+
     $('#view-login').classList.add('hidden');
     $('#view-app').classList.remove('hidden');
 
-    // Foydalanuvchi panelini to'ldiramiz
+    // Foydalanuvchi paneli
     $('#user-name').textContent = user.displayName || user.username;
-    $('#user-role').textContent = user.role;
+    $('#user-role').textContent = ROLE_DISPLAY[user.role] || user.role;
     $('#user-avatar').textContent = (user.displayName || user.username).slice(0, 1).toUpperCase();
 
-    // Navigatsiya hodisalari
-    $$('.nav-item').forEach((btn) => {
-      btn.addEventListener('click', () => navigateTo(btn.dataset.page));
-    });
+    // Topbar rol chipi
+    const chip = $('#role-chip');
+    chip.textContent = ROLE_DISPLAY[user.role] || user.role;
+    chip.className = `role-chip ${user.role}`;
 
-    // Chiqish
+    // Sidebar ni qurish
+    buildSidebar(roleConfig);
+
+    // Chiqish tugmasi
     $('#btn-logout').addEventListener('click', async () => {
       try { await API.logout(); } catch (_) {}
       stopWS();
@@ -93,47 +144,94 @@
       location.reload();
     });
 
-    // Bildirishnomalar paneli
+    // Bildirishnomalar
     $('#btn-notifications').addEventListener('click', toggleNotifPanel);
 
-    // WebSocket ishga tushirish
     startWS();
     startRefresh();
 
-    // Birinchi sahifani ko'rsatamiz (hash dan yoki dashboard)
-    const initialPage = (location.hash || '#dashboard').replace('#', '');
-    navigateTo(PAGE_TITLES[initialPage] ? initialPage : 'dashboard');
+    // Birinchi sahifa: hash dan yoki rolning bosh sahifasi
+    const hashed = (location.hash || '').replace('#', '');
+    const initialPage = (hashed && allowedPagesSet.has(hashed)) ? hashed : roleConfig.home;
+    navigateTo(initialPage);
 
-    // Hash o'zgarishini kuzatamiz
+    // Hash o'zgarishini kuzatish (ruxsat tekshiruvi bilan)
     window.addEventListener('hashchange', () => {
-      const page = (location.hash || '#dashboard').replace('#', '');
-      if (PAGE_TITLES[page] && page !== currentPage) navigateTo(page, false);
+      const page = (location.hash || '').replace('#', '');
+      if (!page || page === currentPage) return;
+      navigateTo(page, false);
     });
   }
 
+  function buildSidebar(roleConfig) {
+    const nav = $('#sidebar-nav');
+    nav.innerHTML = '';
+    for (const section of roleConfig.sections) {
+      const sec = document.createElement('div');
+      sec.className = 'nav-section';
+      sec.innerHTML = `<div class="nav-section-label">${section.label}</div>`;
+      for (const pageId of section.pages) {
+        const meta = PAGE_META[pageId];
+        if (!meta) continue;
+        const btn = document.createElement('button');
+        btn.className = 'nav-item';
+        btn.dataset.page = pageId;
+        btn.innerHTML = `<span class="nav-item-icon">${meta.icon}</span> ${meta.title}`;
+        btn.addEventListener('click', () => navigateTo(pageId));
+        sec.appendChild(btn);
+      }
+      nav.appendChild(sec);
+    }
+  }
+
   function navigateTo(page, updateHash = true) {
-    if (!PAGE_TITLES[page]) page = 'dashboard';
+    // Ruxsat tekshiruvi
+    if (!allowedPagesSet.has(page)) {
+      renderAccessDenied(page);
+      return;
+    }
+    if (!PAGE_META[page]) {
+      page = ROLE_PAGES[currentRole].home;
+    }
     currentPage = page;
     if (updateHash) location.hash = page;
 
-    // Sidebar holatini yangilaymiz
+    // Active nav item
     $$('.nav-item').forEach((b) => {
       b.classList.toggle('active', b.dataset.page === page);
     });
 
-    // Topbar sarlavhasi
-    const meta = PAGE_TITLES[page];
+    // Topbar
+    const meta = PAGE_META[page];
     $('#page-title').textContent = meta.title;
     $('#page-subtitle').textContent = meta.subtitle;
 
-    // Sahifa kontentini renderlaymiz
+    // Render
     const container = $('#page-content');
     container.innerHTML = '';
     if (typeof Pages[page] === 'function') {
-      Pages[page](container);
+      Pages[page](container, currentRole);
     } else {
-      container.innerHTML = `<div class="card"><div class="card-body">Sahifa topilmadi.</div></div>`;
+      renderAccessDenied(page);
     }
+  }
+
+  function renderAccessDenied(page) {
+    $('#page-title').textContent = 'Ruxsat yo\'q';
+    $('#page-subtitle').textContent = 'Bu sahifani ko\'rish uchun yetarli huquqlaringiz yo\'q';
+    $('#page-content').innerHTML = `
+      <div class="access-denied">
+        <div class="access-denied-icon">🔒</div>
+        <div class="access-denied-title">Bu bo'limga kirish ruxsati yo'q</div>
+        <div class="access-denied-message">
+          "${PAGE_META[page]?.title || page}" sahifasi sizning rolingiz (<b>${ROLE_DISPLAY[currentRole]}</b>) uchun
+          ruxsat etilmagan. Agar bu sizga keraksiz deb hisoblasangiz, bosh menejer bilan bog'laning.
+        </div>
+        <button class="btn btn-primary" onclick="location.hash='${ROLE_PAGES[currentRole].home}'">
+          Bosh sahifaga qaytish
+        </button>
+      </div>
+    `;
   }
 
   // ===========================================================================
@@ -144,10 +242,7 @@
     wsConn = UI.connectWS({
       token,
       onEvent: handleWsEvent,
-      onOpen: () => {
-        // Yangi bildirishnomalar sonini olamiz
-        refreshNotifCount();
-      },
+      onOpen: () => refreshNotifCount(),
       onClose: () => {},
     });
   }
@@ -157,18 +252,16 @@
   }
 
   function handleWsEvent(msg) {
-    // Bildirishnoma kelishi: toast ko'rsatamiz va sonni oshiramiz
     if (msg.topic === 'notification.created') {
       const p = msg.payload || {};
       const sev = p.severity === 'critical' ? 'danger'
                 : p.severity === 'warning' ? 'warning'
                 : p.severity === 'success' ? 'success' : 'info';
-      UI.toast(p.message || 'Yangi xabar', { severity: sev });
+      if (p.message) UI.toast(p.message, { severity: sev });
       unreadCount++;
       updateNotifBadge();
     }
 
-    // Joriy sahifa hodisaga sezgir bo'lsa, yangilaymiz
     const refreshPages = {
       'room.status_changed': ['dashboard', 'rooms', 'housekeeping', 'reception'],
       'guest.checked_in':    ['dashboard', 'reception', 'rooms'],
@@ -180,22 +273,20 @@
       'room.cleaning_required': ['dashboard', 'housekeeping', 'rooms'],
     };
     const pages = refreshPages[msg.topic] || [];
-    if (pages.includes(currentPage)) {
-      // Engil debounce — bir nechta hodisa ketma-ket kelsa
+    if (pages.includes(currentPage) && allowedPagesSet.has(currentPage)) {
       clearTimeout(handleWsEvent._t);
-      handleWsEvent._t = setTimeout(() => Pages[currentPage]($('#page-content')), 250);
+      handleWsEvent._t = setTimeout(() => Pages[currentPage]($('#page-content'), currentRole), 250);
     }
   }
 
   // ===========================================================================
-  // AUTO-REFRESH (WS ga qo'shimcha sifatida, taymerlar uchun)
+  // AUTO-REFRESH
   // ===========================================================================
   function startRefresh() {
     stopRefresh();
-    // Har 30 sekundda joriy sahifani jimgina yangilaymiz (taymer ko'rsatkichlari uchun)
     refreshTimer = setInterval(() => {
-      if (currentPage === 'dashboard' || currentPage === 'rooms' || currentPage === 'housekeeping') {
-        Pages[currentPage]($('#page-content'));
+      if (['dashboard', 'rooms', 'housekeeping'].includes(currentPage) && allowedPagesSet.has(currentPage)) {
+        Pages[currentPage]($('#page-content'), currentRole);
       }
     }, 30000);
   }
@@ -256,7 +347,6 @@
     `;
     document.body.appendChild(panel);
 
-    // Klikda o'qilgan deb belgilaymiz
     panel.querySelectorAll('.notif-item').forEach((it) => {
       it.addEventListener('click', async () => {
         if (it.classList.contains('unread')) {
@@ -276,7 +366,6 @@
       } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
     });
 
-    // Tashqariga klik — yopish
     setTimeout(() => {
       const closeOnOutside = (ev) => {
         if (!panel.contains(ev.target) && ev.target.id !== 'btn-notifications') {
@@ -297,23 +386,22 @@
   // ===========================================================================
   document.addEventListener('DOMContentLoaded', () => {
     initLogin();
-    // Allaqachon login bo'lganmi tekshiramiz
     const token = API._auth.getToken();
     const user = API._auth.getUser();
     if (token && user) {
-      // Tokenni server bilan tekshiramiz
       API.me()
         .then((res) => showApp(res.user))
-        .catch(() => {
-          API._auth.clearToken();
-        });
+        .catch(() => { API._auth.clearToken(); });
     }
   });
 
-  // 401 da login ekraniga qaytaramiz
   window.HotelOS.onUnauthorized = () => {
     stopWS();
     stopRefresh();
     setTimeout(() => location.reload(), 100);
   };
+
+  // Tashqi qulaylik (debug uchun)
+  window.HotelOS.currentRole = () => currentRole;
+  window.HotelOS.allowedPages = () => Array.from(allowedPagesSet);
 })();

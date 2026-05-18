@@ -1615,3 +1615,119 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .topbar-right { align-self: stretch; justify-content: flex-end; }
   .notif-panel { right: 12px; left: 12px; width: auto; }
 }
+
+/* ============================================================
+   ROLE CHIP (joriy rolni topbarda ko'rsatish)
+   ============================================================ */
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+.role-chip.manager {
+  background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+  border-color: #F59E0B;
+  color: #92400E;
+}
+.role-chip.reception {
+  background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+  border-color: #3B82F6;
+  color: #1E40AF;
+}
+.role-chip.housekeeping {
+  background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
+  border-color: #10B981;
+  color: #065F46;
+}
+.role-chip.maintenance {
+  background: linear-gradient(135deg, #EDE9FE 0%, #DDD6FE 100%);
+  border-color: #8B5CF6;
+  color: #5B21B6;
+}
+
+/* Demo account buttons — rol bo'yicha rangli */
+.demo-account.role-manager      { border-left: 4px solid #F59E0B; }
+.demo-account.role-reception    { border-left: 4px solid #3B82F6; }
+.demo-account.role-housekeeping { border-left: 4px solid #10B981; }
+.demo-account.role-maintenance  { border-left: 4px solid #8B5CF6; }
+
+/* ============================================================
+   PERMISSION DENIED PAGE
+   ============================================================ */
+.access-denied {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 64px 32px;
+  text-align: center;
+}
+.access-denied-icon {
+  font-size: 56px;
+  margin-bottom: 24px;
+  opacity: 0.6;
+}
+.access-denied-title {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+.access-denied-message {
+  color: var(--text-muted);
+  font-size: 14px;
+  max-width: 480px;
+  margin: 0 auto 24px;
+  line-height: 1.6;
+}
+
+/* ============================================================
+   ROLE PERMISSIONS TABLE (Sozlamalardagi rollar jadvali)
+   ============================================================ */
+.role-permissions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.role-row {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  gap: 16px;
+}
+.role-badge {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 110px;
+  text-align: center;
+}
+.role-badge.manager      { background: #FEF3C7; color: #92400E; }
+.role-badge.reception    { background: #DBEAFE; color: #1E40AF; }
+.role-badge.housekeeping { background: #D1FAE5; color: #065F46; }
+.role-badge.maintenance  { background: #EDE9FE; color: #5B21B6; }
+.role-perms-list {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Empty/disabled nav sections */
+.nav-section-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}

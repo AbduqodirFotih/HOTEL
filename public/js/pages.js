@@ -19,7 +19,27 @@
   const fmtTime = UI.formatTime;
 
   // ===========================================================================
-  // PAGE: DASHBOARD
+  // ROL VA HUQUQ YORDAMCHILARI
+  // Frontend backend bilan bir xil huquq matritsasidan foydalanadi (sessiyada
+  // saqlangan permissions obyekti). Backend HAR DOIM yana qayta tekshiradi —
+  // bu yerdagi tekshiruvlar faqat UI uchun.
+  // ===========================================================================
+  const currentUser = () => API._auth.getUser() || { role: 'guest', permissions: {} };
+  const perms = () => currentUser().permissions || {};
+  const can = (action) => perms()[action] === true;
+  const seePrices = () => perms().seePrices === true;
+  const seeGuestNames = () => perms().seeGuestNames === true;
+
+  // Narxni rol bo'yicha ko'rsatish/yashirish yordamchisi
+  const priceOrHidden = (amount) => seePrices() ? fmtUZS(amount) : '<span class="text-muted">—</span>';
+
+  // ===========================================================================
+  // PAGE: DASHBOARD (rolga moslashtirilgan)
+  // Har bir rol o'z bo'limiga eng dolzarb ma'lumotlarni ko'radi:
+  //   manager     -> hammasini ko'radi (daromad, statistika, hodisa jurnali)
+  //   reception   -> xonalar holati + mehmonlar + faol buyurtmalar
+  //   housekeeping-> tozalash navbati + iflos xonalar + 12-soatlik taymerlar
+  //   maintenance -> ochiq so'rovlar + ustuvorlik navbati
   // ===========================================================================
   async function dashboard(container) {
     container.innerHTML = `<div class="card"><div class="card-body">Yuklanmoqda...</div></div>`;
@@ -27,68 +47,168 @@
     try { data = await API.dashboardSummary(); }
     catch (err) { UI.toast(err.message, { severity: 'danger', title: 'Xato' }); return; }
 
-    const { rooms, summary, activeOrders, openMaintenance, cleaningQueue, notifications, guests, stats, recentEvents } = data;
+    const role = currentUser().role;
 
+    if (role === 'housekeeping') {
+      renderHousekeepingDashboard(container, data);
+    } else if (role === 'maintenance') {
+      renderMaintenanceDashboard(container, data);
+    } else if (role === 'reception') {
+      renderReceptionDashboard(container, data);
+    } else {
+      renderManagerDashboard(container, data);
+    }
+  }
+
+  // -- Bosh menejer: hamma narsa, statistika, daromad, hodisalar ---------------
+  function renderManagerDashboard(container, data) {
+    const { rooms, summary, activeOrders, openMaintenance, cleaningQueue, guests, stats, recentEvents } = data;
     container.innerHTML = `
       <div class="kpi-grid">
         ${kpiCard('Jami Xonalar', summary.total, 'Inventar', '🏢', 'primary')}
-        ${kpiCard('Toza', summary.clean || 0, 'Yangi mehmonlar uchun tayyor', '✓', 'success')}
-        ${kpiCard('Band', summary.occupied || 0, 'Mehmonlar joyida', '👤', 'primary')}
+        ${kpiCard('Toza', summary.clean || 0, 'Mehmonlar uchun tayyor', '✓', 'success')}
+        ${kpiCard('Band', summary.occupied || 0, 'Joyida', '👤', 'primary')}
         ${kpiCard('Iflos', summary.dirty || 0, 'Tozalash kerak', '⚠', 'warning')}
-        ${kpiCard('Tozalanmoqda', summary.cleaning || 0, 'Hozir tozalanmoqda', '✦', 'info')}
-        ${kpiCard('Texnik xizmat', summary.maintenance || 0, 'Texnik muammolar', '🔧', 'danger')}
+        ${kpiCard('Buyurtmalar', activeOrders.length, 'Hozir faol', '◇', 'info')}
+        ${kpiCard('Texnik xizmat', openMaintenance.length, 'Ochiq so\'rovlar', '⚒', 'danger')}
+      </div>
+
+      ${stats.totalRevenue ? `
+      <div class="kpi-grid" style="margin-top:8px">
+        ${kpiCard('Jami daromad', fmtUZS(stats.totalRevenue), 'Boshlanishidan beri', '💰', 'success')}
+        ${kpiCard('Check-in lar', stats.totalCheckIns || 0, 'Jami', '⊙', 'primary')}
+        ${kpiCard('Check-out lar', stats.totalCheckOuts || 0, 'Jami', '↩', 'primary')}
+        ${kpiCard('Buyurtmalar (jami)', stats.totalOrders || 0, 'Tarix', '∑', 'info')}
+      </div>` : ''}
+
+      <div class="dashboard-grid">
+        ${roomsCard(rooms, summary)}
+        ${ordersCard(activeOrders)}
+        ${maintenanceCard(openMaintenance)}
+        ${cleaningCard(cleaningQueue)}
+        ${guestsCard(guests)}
+        ${eventsCard(recentEvents)}
+      </div>
+    `;
+  }
+
+  // -- Qabul xodimi: xonalar, mehmonlar, buyurtmalar --------------------------
+  function renderReceptionDashboard(container, data) {
+    const { rooms, summary, activeOrders, openMaintenance, guests } = data;
+    container.innerHTML = `
+      <div class="kpi-grid">
+        ${kpiCard('Jami xonalar', summary.total, 'Inventar', '🏢', 'primary')}
+        ${kpiCard('Toza & bo\'sh', summary.clean || 0, 'Yangi mehmonlar uchun', '✓', 'success')}
+        ${kpiCard('Band', summary.occupied || 0, 'Joriy mehmonlar', '👤', 'primary')}
+        ${kpiCard('Faol buyurtmalar', activeOrders.length, 'Xona xizmati', '◇', 'info')}
+      </div>
+
+      <div class="dashboard-grid">
+        ${roomsCard(rooms, summary)}
+        ${guestsCard(guests)}
+        ${ordersCard(activeOrders)}
+        ${maintenanceCard(openMaintenance, 'Texnik xizmat so\'rovlari')}
+      </div>
+    `;
+  }
+
+  // -- Tozalash xodimi: faqat tozalash bilan bog'liq -------------------------
+  function renderHousekeepingDashboard(container, data) {
+    const { rooms, summary, cleaningQueue } = data;
+    const dirtyRooms = rooms.filter((r) => r.status === 'dirty');
+    const cleaningRooms = rooms.filter((r) => r.status === 'cleaning');
+    const cleanRooms = rooms.filter((r) => r.status === 'clean');
+    const dueSoon = cleanRooms.filter((r) => r.lastCleanedAt && (Date.now() - r.lastCleanedAt) > 10 * 3600000).length;
+
+    container.innerHTML = `
+      <div class="kpi-grid">
+        ${kpiCard('Tozalash navbati', cleaningQueue.length, '12 soatlik tsikl', '✦', 'warning')}
+        ${kpiCard('Iflos xonalar', dirtyRooms.length, 'Tezroq tozalansin', '⚠', 'warning')}
+        ${kpiCard('Tozalanmoqda', cleaningRooms.length, 'Jarayonda', '✦', 'info')}
+        ${kpiCard('Yaqin orada', dueSoon, '10+ soat o\'tdi', '⏱', 'warning')}
       </div>
 
       <div class="dashboard-grid">
         <div class="card">
           <div class="card-header">
+            <h3 class="card-title"><span class="card-title-icon">⚠</span> Iflos Xonalar — Darhol Tozalansin</h3>
+            <span class="text-muted text-sm">${dirtyRooms.length} ta</span>
+          </div>
+          <div class="card-body">
+            ${dirtyRooms.length === 0
+              ? `<div class="table-empty">Ajoyib! Iflos xonalar yo'q ✓</div>`
+              : dirtyRooms.map((r) => `
+                <div class="order-row">
+                  <div class="order-info">
+                    <div class="order-title">Xona ${r.number} — ${UI.ROOM_TYPE_LABELS[r.type]}</div>
+                    <div class="order-items-summary">
+                      ${r.dirtyAt ? `Iflosligiga: <b>${fmtDur(Date.now() - r.dirtyAt)}</b>` : ''}
+                    </div>
+                  </div>
+                  <div class="order-actions">
+                    <button class="btn btn-primary btn-sm" data-quick-start="${r.number}">▶ Tozalashni boshlash</button>
+                  </div>
+                </div>
+              `).join('')}
+          </div>
+        </div>
+
+        ${cleaningCard(cleaningQueue, 'Navbat')}
+
+        <div class="card">
+          <div class="card-header">
             <h3 class="card-title"><span class="card-title-icon">🏢</span> Xonalar Holati</h3>
-            <span class="text-muted text-sm">${summary.total} xona / 2 qavat</span>
           </div>
           <div class="card-body">
-            <div class="room-grid" id="dashboard-rooms">
-              ${rooms.map(roomCard).join('')}
-            </div>
+            <div class="room-grid">${rooms.map(roomCard).join('')}</div>
           </div>
         </div>
+      </div>
+    `;
 
+    // Tezkor tugma — to'g'ridan-to'g'ri tozalashni boshlash
+    $$('[data-quick-start]', container).forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await API.startCleaning(parseInt(b.dataset.quickStart, 10));
+        UI.toast(`Xona ${b.dataset.quickStart} tozalanmoqda`, { severity: 'info' });
+        dashboard(container);
+      } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
+    }));
+  }
+
+  // -- Texnik xodim: faqat texnik so'rovlar ----------------------------------
+  function renderMaintenanceDashboard(container, data) {
+    const { rooms, openMaintenance } = data;
+    const critical = openMaintenance.filter((r) => r.urgency === 'critical').length;
+    const high = openMaintenance.filter((r) => r.urgency === 'high').length;
+
+    container.innerHTML = `
+      <div class="kpi-grid">
+        ${kpiCard('Ochiq so\'rovlar', openMaintenance.length, 'Hal qilinishi kerak', '⚒', 'warning')}
+        ${kpiCard('Kritik', critical, 'Darhol e\'tibor!', '!', 'danger')}
+        ${kpiCard('Yuqori', high, 'Birinchi navbatda', '↑', 'warning')}
+        ${kpiCard('Jami xonalar', rooms.length, 'Inventar', '🏢', 'primary')}
+      </div>
+
+      <div class="dashboard-grid">
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title"><span class="card-title-icon">◇</span> Faol Buyurtmalar</h3>
-            <span class="text-muted text-sm">${activeOrders.length} ta</span>
-          </div>
-          <div class="card-body">
-            ${activeOrders.length === 0
-              ? `<div class="table-empty">Hozircha faol buyurtmalar yo'q</div>`
-              : activeOrders.slice(0, 5).map(orderRow).join('')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title"><span class="card-title-icon">⚒</span> Texnik Xizmat Navbati</h3>
-            <span class="text-muted text-sm">${openMaintenance.length} ochiq</span>
+            <h3 class="card-title"><span class="card-title-icon">⚒</span> Sizning Ustuvorlik Navbatingiz</h3>
+            <span class="text-muted text-sm">Kritik birinchi · keyin FIFO</span>
           </div>
           <div class="card-body">
             ${openMaintenance.length === 0
-              ? `<div class="table-empty">Ochiq texnik xizmat so'rovi yo'q</div>`
-              : openMaintenance.slice(0, 5).map(maintRow).join('')}
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title"><span class="card-title-icon">✦</span> Tozalash Navbati</h3>
-            <span class="text-muted text-sm">${cleaningQueue.length} ta</span>
-          </div>
-          <div class="card-body">
-            ${cleaningQueue.length === 0
-              ? `<div class="table-empty">Tozalash navbati bo'sh</div>`
-              : cleaningQueue.map((q) => `
+              ? `<div class="table-empty">Ochiq so'rovlar yo'q — ajoyib ish! ✓</div>`
+              : openMaintenance.map((r, i) => `
                 <div class="order-row">
                   <div class="order-info">
-                    <div class="order-id">Xona ${q.roomNumber}</div>
-                    <div class="order-items-summary">Sabab: ${esc(q.reason || 'manual')} · ${fmtDur(Date.now() - q.addedAt)} oldin qo'shildi</div>
+                    <div class="order-title">#${i + 1} · Xona ${r.roomNumber} — ${esc(r.category)}</div>
+                    <div class="order-items-summary">${esc(r.description)}</div>
+                    <div class="text-sm text-muted">${fmtDur(Date.now() - r.submittedAt)} oldin</div>
+                  </div>
+                  <div class="order-actions">
+                    ${UI.priorityPill(r.urgency)}
+                    <button class="btn btn-success btn-sm" data-quick-resolve="${r.id}">✓ Hal qilindi</button>
                   </div>
                 </div>
               `).join('')}
@@ -97,36 +217,127 @@
 
         <div class="card">
           <div class="card-header">
-            <h3 class="card-title"><span class="card-title-icon">👥</span> Hozirgi Mehmonlar</h3>
-            <span class="text-muted text-sm">${guests.length} mehmon</span>
+            <h3 class="card-title"><span class="card-title-icon">🏢</span> Xonalar Holati</h3>
           </div>
           <div class="card-body">
-            ${guests.length === 0
-              ? `<div class="table-empty">Hozirgi mehmonlar yo'q</div>`
-              : `<table class="table"><thead><tr><th>Mehmon</th><th>Xona</th><th>Check-in</th><th>Tunlar</th></tr></thead><tbody>
-                ${guests.map((g) => `
-                  <tr>
-                    <td><span class="font-semibold">${esc(g.name)}</span></td>
-                    <td><span class="font-mono">${g.roomNumber}</span></td>
-                    <td class="text-sm">${fmtDT(g.checkInAt)}</td>
-                    <td>${g.nights}</td>
-                  </tr>
-                `).join('')}
-                </tbody></table>`}
+            <div class="room-grid">${rooms.map(roomCard).join('')}</div>
           </div>
         </div>
+      </div>
+    `;
 
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title"><span class="card-title-icon">⌬</span> So'nggi Hodisalar</h3>
-            <span class="text-muted text-sm">jonli</span>
-          </div>
-          <div class="card-body">
-            <div class="event-log">
-              ${recentEvents.length === 0
-                ? `<div class="text-muted text-sm">Hodisalar yo'q</div>`
-                : recentEvents.slice(0, 12).map(eventEntry).join('')}
-            </div>
+    $$('[data-quick-resolve]', container).forEach((b) => b.addEventListener('click', async () => {
+      try {
+        await API.resolveMaintenance(b.dataset.quickResolve, 'Texnik tomonidan hal qilindi');
+        UI.toast('Hal qilindi ✓', { severity: 'success' });
+        dashboard(container);
+      } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
+    }));
+  }
+
+  // -- Yordamchi kartochkalar (qayta ishlatiladi) -----------------------------
+  function roomsCard(rooms, summary) {
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">🏢</span> Xonalar Holati</h3>
+          <span class="text-muted text-sm">${summary.total} xona / 2 qavat</span>
+        </div>
+        <div class="card-body">
+          <div class="room-grid">${rooms.map(roomCard).join('')}</div>
+        </div>
+      </div>
+    `;
+  }
+  function ordersCard(activeOrders) {
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">◇</span> Faol Buyurtmalar</h3>
+          <span class="text-muted text-sm">${activeOrders.length} ta</span>
+        </div>
+        <div class="card-body">
+          ${activeOrders.length === 0
+            ? `<div class="table-empty">Hozircha faol buyurtmalar yo'q</div>`
+            : activeOrders.slice(0, 5).map(orderRow).join('')}
+        </div>
+      </div>
+    `;
+  }
+  function maintenanceCard(openMaintenance, title = 'Texnik Xizmat Navbati') {
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">⚒</span> ${esc(title)}</h3>
+          <span class="text-muted text-sm">${openMaintenance.length} ochiq</span>
+        </div>
+        <div class="card-body">
+          ${openMaintenance.length === 0
+            ? `<div class="table-empty">Ochiq texnik xizmat so'rovi yo'q</div>`
+            : openMaintenance.slice(0, 5).map(maintRow).join('')}
+        </div>
+      </div>
+    `;
+  }
+  function cleaningCard(cleaningQueue, title = 'Tozalash Navbati') {
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">✦</span> ${esc(title)}</h3>
+          <span class="text-muted text-sm">${cleaningQueue.length} ta</span>
+        </div>
+        <div class="card-body">
+          ${cleaningQueue.length === 0
+            ? `<div class="table-empty">Tozalash navbati bo'sh</div>`
+            : cleaningQueue.map((q) => `
+              <div class="order-row">
+                <div class="order-info">
+                  <div class="order-id">Xona ${q.roomNumber}</div>
+                  <div class="order-items-summary">Sabab: ${esc(q.reason || 'manual')} · ${fmtDur(Date.now() - q.addedAt)} oldin qo'shildi</div>
+                </div>
+              </div>
+            `).join('')}
+        </div>
+      </div>
+    `;
+  }
+  function guestsCard(guests) {
+    const nameCol = seeGuestNames() ? 'Mehmon' : 'Mehmon (anonim)';
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">👥</span> Hozirgi Mehmonlar</h3>
+          <span class="text-muted text-sm">${guests.length} mehmon</span>
+        </div>
+        <div class="card-body">
+          ${guests.length === 0
+            ? `<div class="table-empty">Hozirgi mehmonlar yo'q</div>`
+            : `<table class="table"><thead><tr><th>${nameCol}</th><th>Xona</th><th>Check-in</th><th>Tunlar</th></tr></thead><tbody>
+              ${guests.map((g) => `
+                <tr>
+                  <td><span class="font-semibold">${esc(g.name || g.initials || '—')}</span></td>
+                  <td><span class="font-mono">${g.roomNumber}</span></td>
+                  <td class="text-sm">${fmtDT(g.checkInAt)}</td>
+                  <td>${g.nights}</td>
+                </tr>
+              `).join('')}
+              </tbody></table>`}
+        </div>
+      </div>
+    `;
+  }
+  function eventsCard(recentEvents) {
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">⌬</span> So'nggi Hodisalar</h3>
+          <span class="text-muted text-sm">jonli</span>
+        </div>
+        <div class="card-body">
+          <div class="event-log">
+            ${recentEvents.length === 0
+              ? `<div class="text-muted text-sm">Hodisalar yo'q</div>`
+              : recentEvents.slice(0, 12).map(eventEntry).join('')}
           </div>
         </div>
       </div>
@@ -161,6 +372,15 @@
       const elapsed = now - room.cleaningStartedAt;
       timerHtml = `<div class="timer-ribbon dirty-timer"><span>Tozalanmoqda:</span><span>${fmtDur(elapsed)}</span></div>`;
     }
+
+    // Narx — faqat ko'rish ruxsati bor rollarda ko'rsatiladi
+    const priceRow = (seePrices() && room.nightlyRate)
+      ? `<div class="room-meta">
+           <span class="room-meta-label">Narx:</span>
+           <span class="font-mono">${fmtUZS(room.nightlyRate)}/tun</span>
+         </div>`
+      : '';
+
     return `
       <div class="room-card" data-room="${room.number}">
         <div class="room-card-header">
@@ -170,10 +390,7 @@
           </div>
           ${UI.statusPill(room.status)}
         </div>
-        <div class="room-meta">
-          <span class="room-meta-label">Narx:</span>
-          <span class="font-mono">${fmtUZS(room.nightlyRate)}/tun</span>
-        </div>
+        ${priceRow}
         ${timerHtml}
       </div>
     `;
@@ -181,10 +398,13 @@
 
   function orderRow(o) {
     const itemsSummary = o.items.map((i) => `${i.quantity}× ${i.name}`).join(', ');
+    const title = seePrices() && o.total != null
+      ? `Xona ${o.roomNumber} — ${fmtUZS(o.total)}`
+      : `Xona ${o.roomNumber}`;
     return `
       <div class="order-row">
         <div class="order-info">
-          <div class="order-title">Xona ${o.roomNumber} — ${fmtUZS(o.total)}</div>
+          <div class="order-title">${title}</div>
           <div class="order-id">${o.id.slice(0, 18)}…</div>
           <div class="order-items-summary">${esc(itemsSummary)}</div>
         </div>
@@ -365,7 +585,7 @@
             <tbody>
               ${guests.map((g) => `
                 <tr>
-                  <td><span class="font-semibold">${esc(g.name)}</span></td>
+                  <td><span class="font-semibold">${esc(g.name || g.initials || '—')}</span></td>
                   <td><span class="font-mono">${g.roomNumber}</span></td>
                   <td class="text-sm">${fmtDT(g.checkInAt)}</td>
                   <td>${g.nights}</td>
