@@ -8,14 +8,23 @@
   const API_BASE = '/api';
   const TOKEN_KEY = 'hotelos_token';
   const USER_KEY = 'hotelos_user';
+  const POLICY_KEY = 'hotelos_policy';
 
   function getToken() { return localStorage.getItem(TOKEN_KEY); }
   function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
-  function clearToken() { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY); }
+  function clearToken() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(POLICY_KEY);
+  }
   function getUser() {
     try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch (_) { return null; }
   }
   function setUser(u) { localStorage.setItem(USER_KEY, JSON.stringify(u)); }
+  function getPolicy() {
+    try { return JSON.parse(localStorage.getItem(POLICY_KEY) || 'null'); } catch (_) { return null; }
+  }
+  function setPolicy(p) { localStorage.setItem(POLICY_KEY, JSON.stringify(p)); }
 
   async function request(method, path, body) {
     const headers = { 'Content-Type': 'application/json' };
@@ -107,7 +116,7 @@
     runAllTests: () => request('POST', '/tests/run-all'),
 
     // Auth helpers (token storage)
-    _auth: { getToken, setToken, clearToken, getUser, setUser },
+    _auth: { getToken, setToken, clearToken, getUser, setUser, getPolicy, setPolicy },
   };
 
   window.HotelOS = window.HotelOS || {};
