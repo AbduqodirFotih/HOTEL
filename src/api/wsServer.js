@@ -1,12 +1,13 @@
 /**
  * wsServer.js
  * --------------------------------------------------------------------------
- * WebSocket server. Brokerga obuna bo'ladi va barcha ulangan mijozlarga
- * jonli xabarlarni uzatadi. Avtorizatsiya: ulanish vaqtida ?token=...
- * yoki ulanishdan keyin {type:"auth", token: "..."} xabari talab qilinadi.
+ * WebSocket server. Brokerga obuna bo'ladi va har bir ulangan mijozga
+ * uning ROLIGA mos sanitize qilingan xabar yuboradi.
  *
- * Xavfsizlik: maxfiy ma'lumotlar (to'liq mehmon ismi, to'lov tafsilotlari)
- * WebSocket orqali tarqalmaydi — faqat anonim/qisqartirilgan ma'lumotlar.
+ * Xavfsizlik:
+ *   - Faqat tokenlashtirilgan ulanishlar xabarlarni qabul qiladi
+ *   - Har bir mijoz uchun rol saqlanadi (ws.session)
+ *   - Narxlar va shaxsiy ismlar rolga qarab olib tashlanadi
  * --------------------------------------------------------------------------
  */
 
@@ -30,52 +31,94 @@ const FORWARDED_TOPICS = [
   'notification.created',
 ];
 
-/** Klientga yuborish uchun xabardan maxfiy maydonlarni olib tashlaymiz */
-function sanitizePayload(topic, payload) {
+/**
+ * Xabar yukini ma'lum bir rolga mos qilib tozalash.
+ * Bu func har bir mijoz uchun alohida chaqiriladi.
+ */
+function sanitizePayloadForRole(topic, payload, role) {
+  const perms = auth.getPermissions(role);
+  if (!perms) return null; // noma'lum rol — xabar yubormaymiz
+
   const p = JSON.parse(JSON.stringify(payload || {}));
-  // Mehmon ma'lumotlarini qisqartirish — to'liq ism o'rniga bosh harflar
-  if (p.guest) {
+
+  // Mehmon ismlari — faqat seeGuestNames ruxsati bilan
+  if (p.guest && !perms.seeGuestNames) {
     p.guest = {
       id: p.guest.id,
       initials: (p.guest.name || '?').split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase(),
       roomNumber: p.guest.roomNumber,
     };
-  }
-  // Hisobotda to'liq summani saqlaymiz, lekin xom tafsilotlarni olib tashlaymiz
-  if (p.bill) {
-    p.bill = {
-      total: p.bill.total,
-      nights: p.bill.nights,
-      currency: p.bill.currency,
-      roomNumber: p.bill.roomNumber,
+  } else if (p.guest && perms.seeGuestNames) {
+    p.guest = {
+      id: p.guest.id,
+      name: p.guest.name,
+      roomNumber: p.guest.roomNumber,
     };
   }
+
+  // Bill — narx ko'ra oladiganlar uchun summa, boshqalar uchun yo'q
+  if (p.bill) {
+    if (perms.seePrices) {
+      p.bill = { total: p.bill.total, nights: p.bill.nights, currency: p.bill.currency, roomNumber: p.bill.roomNumber };
+    } else {
+      delete p.bill;
+    }
+  }
+
+  // Order — narxsiz versiya
+  if (p.order && !perms.seePrices) {
+    p.order = {
+      id: p.order.id,
+      roomNumber: p.order.roomNumber,
+      status: p.order.status,
+      items: (p.order.items || []).map((it) => ({
+        name: it.name, quantity: it.quantity,
+      })),
+    };
+  }
+
+  // Xona narxi
+  if (p.room && !perms.seePrices) {
+    const r = { ...p.room };
+    delete r.nightlyRate;
+    p.room = r;
+  }
+
   return p;
+}
+
+function topicAllowedForRole(topic, role) {
+  // notification.created — barcha rollar oladi (faqat o'z roliga tegishlilari)
+  // boshqalari ham odatda umumiy ma'lumot
+  // events.* — texnik ma'lumot, faqat menejer
+  // (hozir hech qaysi WS hodisani rolga qarab bloklamaymiz, faqat tozalaymiz)
+  return true;
 }
 
 function attach(server) {
   const wss = new WebSocket.Server({ server, path: '/ws' });
-
   const clients = new Set();
 
-  // Brokerdagi har bir mavzuga obuna bo'lib, klientlarga uzatamiz
   for (const topic of FORWARDED_TOPICS) {
     broker.subscribe(topic, (event) => {
-      const msg = JSON.stringify({
-        type: 'event',
-        topic: event.topic,
-        payload: sanitizePayload(event.topic, event.payload),
-        at: event.publishedAt,
-      });
       for (const client of clients) {
-        if (client.readyState === WebSocket.OPEN && client.authenticated) {
-          try { client.send(msg); } catch (err) { /* mijoz uzilgan */ }
-        }
+        if (client.readyState !== WebSocket.OPEN || !client.authenticated) continue;
+        if (!topicAllowedForRole(topic, client.session.role)) continue;
+        const payload = sanitizePayloadForRole(topic, event.payload, client.session.role);
+        if (payload === null) continue;
+        try {
+          client.send(JSON.stringify({
+            type: 'event',
+            topic: event.topic,
+            payload,
+            at: event.publishedAt,
+          }));
+        } catch (_) { /* mijoz uzilgan */ }
       }
     });
   }
 
-  // Har 10 sekundda heartbeat
+  // Heartbeat
   setInterval(() => {
     const ts = JSON.stringify({ type: 'heartbeat', at: Date.now() });
     for (const c of clients) {
@@ -88,14 +131,20 @@ function attach(server) {
   wss.on('connection', (ws, req) => {
     clients.add(ws);
     ws.authenticated = false;
+    ws.session = null;
 
-    // Token URL query orqali kelishi mumkin
     const parsed = url.parse(req.url, true);
     const tokenFromQuery = parsed.query?.token;
-    if (tokenFromQuery && auth.validateToken(tokenFromQuery)) {
-      ws.authenticated = true;
-      ws.send(JSON.stringify({ type: 'auth_ok' }));
-      logger.debug('[WS] Ulanish autentifikatsiyalandi (query)');
+    if (tokenFromQuery) {
+      const session = auth.validateToken(tokenFromQuery);
+      if (session) {
+        ws.authenticated = true;
+        ws.session = session;
+        ws.send(JSON.stringify({ type: 'auth_ok', role: session.role }));
+        logger.debug(`[WS] Ulanish autentifikatsiyalandi (${session.username}, ${session.role})`);
+      } else {
+        ws.send(JSON.stringify({ type: 'auth_required' }));
+      }
     } else {
       ws.send(JSON.stringify({ type: 'auth_required' }));
     }
@@ -105,10 +154,12 @@ function attach(server) {
       try { msg = JSON.parse(data.toString()); } catch (_) { return; }
 
       if (msg.type === 'auth' && msg.token) {
-        if (auth.validateToken(msg.token)) {
+        const session = auth.validateToken(msg.token);
+        if (session) {
           ws.authenticated = true;
-          ws.send(JSON.stringify({ type: 'auth_ok' }));
-          logger.debug('[WS] Ulanish autentifikatsiyalandi (msg)');
+          ws.session = session;
+          ws.send(JSON.stringify({ type: 'auth_ok', role: session.role }));
+          logger.debug(`[WS] Ulanish autentifikatsiyalandi (msg, ${session.role})`);
         } else {
           ws.send(JSON.stringify({ type: 'auth_error', message: 'Token noto\'g\'ri' }));
         }
