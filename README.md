@@ -167,21 +167,23 @@ Tizimda 4 ta rol. Har biri o'z bo'limining doirasida ishlaydi. Backend HAR DOIM 
 | Dashboard (rolga moslashtirilgan) | ✓ | ✓ | ✓ | ✓ |
 | Xonalarni ko'rish              | ✓ | ✓ | ✓ | ✓ |
 | **Narxlarni ko'rish**          | ✓ | ✓ | ❌ | ❌ |
-| **Mehmon ismini ko'rish**      | ✓ | ✓ | ❌ (anonim AK) | ❌ (anonim AK) |
+| Mehmon ro'yxati va ismlarni ko'rish | ✓ | ✓ | ❌ | ❌ |
 | Check-in / Check-out qilish    | ✓ | ✓ | ❌ | ❌ |
 | Buyurtma yaratish              | ✓ | ✓ | ❌ | ❌ |
 | Buyurtma holatini o'zgartirish | ✓ | ✓ | ❌ | ❌ |
 | Menyu va narxlarni ko'rish     | ✓ | ✓ | ❌ | ❌ |
 | Tozalashni boshlash/yakunlash  | ✓ | ❌ | ✓ | ❌ |
-| Texnik xizmat so'rovi yuborish | ✓ | ✓ | ✓ | ✓ |
+| Tozalash navbatiga qo'shish    | ✓ | ✓ | ✓ | ❌ |
+| Texnik xizmat so'rovi yuborish | ✓ | ✓ | ❌ | ✓ |
 | Texnik xizmat so'rovini hal qilish | ✓ | ❌ | ❌ | ✓ |
 | Daromad statistikasi           | ✓ | ❌ | ❌ | ❌ |
 | Test stsenariylari ishga tushirish | ✓ | ❌ | ❌ | ❌ |
-| Hodisa jurnali (broker log)    | ✓ | ❌ | ❌ | ❌ |
+| Hodisa jurnali (broker log)    | ✓ | ✓ | ✓ | ✓ |
+| Sozlamalarni ko'rish           | ✓ | ✓ | ✓ | ✓ |
 | Sozlamalarni o'zgartirish      | ✓ | ❌ | ❌ | ❌ |
 | Ma'lumotlarni qayta tiklash    | ✓ | ❌ | ❌ | ❌ |
 
-**Ikki qatlam himoya:** har bir API endpoint avval `requireAuth` (token), keyin `requirePermission` (aniq harakat huquqi) tekshiradi. Ma'lumotlar darajasida — `sanitizeRoomForRole()`, `sanitizeGuestForRole()`, `sanitizeOrderForRole()` funksiyalari rolga ruxsat etilmagan maydonlarni javobdan olib tashlaydi. WebSocket xabarlari ham har bir mijozga uning roligaga moslab tozalanadi.
+**Ikki qatlam himoya:** har bir API endpoint avval `requireAuth` (token), keyin `requirePermission(perm)` (aniq harakat huquqi) tekshiradi. Ma'lumotlar darajasida — `sanitizeForRole()` funksiyasi rolga ruxsat etilmagan maydonlarni (narxlar, daromad, menyu narxlari, qo'shimcha to'lovlar) javobdan butunlay olib tashlaydi. Hatto frontend xato qilsa yoki foydalanuvchi to'g'ridan-to'g'ri `curl` orqali API ga so'rov yuborsa ham, ruxsatsiz amal **403 Forbidden** bilan rad etiladi va maxfiy ma'lumotlar uzatilmaydi.
 
 ### Boshqa xavfsizlik amallari
 
