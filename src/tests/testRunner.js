@@ -1,19 +1,14 @@
 /**
  * testRunner.js
  * --------------------------------------------------------------------------
- * Topshiriqdagi 8 ta test stsenariyini (TS-01 ... TS-08) avtomatik
- * bajaradigan modul. API serverini ishga tushirmasdan, to'g'ridan-to'g'ri
- * servislarni chaqirib sinab ko'radi.
+ * Topshiriqning 8 ta test stsenariyini (TS-01 ... TS-08) avtomatik bajaradi.
  *
- * Foydalanish:
- *   node src/tests/testRunner.js         -> CLI da ishga tushirish
- *   POST /api/tests/run/:id              -> API orqali ishga tushirish (paneldan)
- *
- * Har bir test:
- *   - precondition: dastlabki holatni o'rnatadi
- *   - act:           harakat bajaradi
- *   - assert:        kutilgan natijani tekshiradi
- *   - cleanup:       keyingi test uchun holatni qaytaradi
+ * Yangi xona workflow (5 bosqich):
+ *   available -> [check-in] -> occupied
+ *   occupied -> [check-out] -> cleaning_required
+ *   cleaning_required -> [start] -> cleaning
+ *   cleaning -> [complete] -> inspection
+ *   inspection -> [confirm] -> available (qabul tomonidan)
  * --------------------------------------------------------------------------
  */
 
@@ -25,19 +20,26 @@ const housekeeping = require('../services/housekeepingService');
 const roomService = require('../services/roomService');
 const maintenance = require('../services/maintenanceService');
 
-function pass(message, details = {}) {
-  return { passed: true, message, details };
-}
-function fail(message, details = {}) {
-  return { passed: false, message, details };
+function pass(message, details = {}) { return { passed: true, message, details }; }
+function fail(message, details = {}) { return { passed: false, message, details }; }
+
+/** Test xonasini to'liq tozalab, available holatga qaytaramiz */
+function fullReset(roomNumber) {
+  const room = store.getRoom(roomNumber);
+  if (!room) return;
+  if (room.status === 'occupied') reception.checkOut(roomNumber);
+  if (room.status === 'cleaning_required') housekeeping.startCleaning(roomNumber, 'test');
+  if (room.status === 'cleaning') housekeeping.markClean(roomNumber, 'test');
+  if (room.status === 'inspection') reception.confirmAvailable(roomNumber);
 }
 
 const SCENARIOS = {
+
   // -------------------------------------------------------------------------
   'TS-01': {
     id: 'TS-01',
     title: 'Mehmon 1-qavatda ikki kishilik xona so\'rab check-in qiladi',
-    description: 'Tizim 1-qavatdagi eng uzoq toza ikki kishilik xonani tayinlaydi. Xona holati "Banda" ga o\'zgaradi.',
+    description: 'Tizim 1-qavatdagi eng uzoq toza ikki kishilik xonani tayinlaydi. Xona holati "Band" ga o\'zgaradi.',
     run: async () => {
       const result = reception.checkIn({
         guestName: 'Test Mehmon TS-01',
@@ -47,29 +49,21 @@ const SCENARIOS = {
         proximityPreference: 'none',
       });
       if (!result.success) return fail(result.error);
-      if (result.room.floor !== 1) {
-        return fail(`Kutilgan: 1-qavat, olindi: ${result.room.floor}-qavat`);
-      }
-      if (result.room.type !== 'double') {
-        return fail(`Kutilgan: double, olindi: ${result.room.type}`);
-      }
-      if (result.room.status !== 'occupied') {
-        return fail(`Kutilgan: occupied, olindi: ${result.room.status}`);
-      }
-      // Cleanup
-      reception.checkOut(result.room.number);
-      housekeeping.markClean(result.room.number);
-      return pass(`Xona ${result.room.number} tayinlandi (${result.assignmentReason})`, { roomNumber: result.room.number });
+      if (result.room.floor !== 1) return fail(`Kutilgan: 1-qavat, olindi: ${result.room.floor}`);
+      if (result.room.type !== 'double') return fail(`Kutilgan: double, olindi: ${result.room.type}`);
+      if (result.room.status !== 'occupied') return fail(`Kutilgan: occupied, olindi: ${result.room.status}`);
+      fullReset(result.room.number);
+      return pass(`Xona ${result.room.number} tayinlandi (${result.assignmentReason})`,
+        { roomNumber: result.room.number });
     },
   },
 
   // -------------------------------------------------------------------------
   'TS-02': {
     id: 'TS-02',
-    title: 'Mehmon check-out qiladi — hisob hisoblanadi, xona iflos bo\'ladi',
-    description: 'Tizim umumiy hisobni hisoblaydi. Xona holati "Iflos"ga o\'zgaradi. "Xona bo\'shatildi" hodisasi nashr etiladi. Tozalash hodisani qabul qiladi va navbatga qo\'shadi.',
+    title: 'Mehmon check-out qiladi — hisob hisoblanadi, xona "Tozalash kerak" bo\'ladi',
+    description: 'Tizim hisob hisoblanadi, xona holati "Tozalash kerak" (cleaning_required) ga o\'zgaradi va tozalovchiga bildirishnoma yuboriladi.',
     run: async () => {
-      // Precondition: yangi mehmonni check-in qilamiz
       const checkIn = reception.checkIn({
         guestName: 'Test Mehmon TS-02', roomType: 'double', nights: 2,
         proximityPreference: 'none',
@@ -81,24 +75,25 @@ const SCENARIOS = {
       if (!result.success) return fail(result.error);
 
       const room = store.getRoom(roomNumber);
-      if (room.status !== 'dirty') return fail(`Kutilgan: dirty, olindi: ${room.status}`);
+      if (room.status !== 'cleaning_required') {
+        return fail(`Kutilgan: cleaning_required, olindi: ${room.status}`);
+      }
       if (!result.bill || result.bill.total <= 0) return fail('Hisob noto\'g\'ri hisoblandi');
 
-      // Cleanup
-      housekeeping.markClean(roomNumber);
-
-      return pass(`Hisob: ${result.bill.total.toLocaleString()} UZS, ${result.bill.nights} tun, xona iflos`,
-        { bill: result.bill, queueSize: housekeeping.getQueue().length });
+      fullReset(roomNumber);
+      return pass(
+        `Hisob: ${result.bill.total.toLocaleString()} UZS, ${result.bill.nights} tun, xona tozalash kerak`,
+        { bill: result.bill, queueSize: housekeeping.getQueue().length },
+      );
     },
   },
 
   // -------------------------------------------------------------------------
   'TS-03': {
     id: 'TS-03',
-    title: 'Tozalovchi xonani toza deb belgilaydi',
-    description: 'Xona holati Iflosdan Tozalanmoqda ga so\'ngra Tozaga o\'zgaradi. Yangi tayinlash uchun mavjud bo\'ladi.',
+    title: 'To\'liq tozalash tsikli: tozalash_kk → tozalanmoqda → tekshiruvda → bo\'sh',
+    description: 'Tozalovchi tozalashni boshlaydi va yakunlaydi, qabul xodimi tasdiqlab xonani yangi mehmonlar uchun mavjud qiladi.',
     run: async () => {
-      // Precondition: iflos xona yarataylik
       const checkIn = reception.checkIn({
         guestName: 'Test Mehmon TS-03', roomType: 'single', nights: 1,
         proximityPreference: 'none',
@@ -107,15 +102,25 @@ const SCENARIOS = {
       const roomNumber = checkIn.room.number;
       reception.checkOut(roomNumber);
 
-      const start = housekeeping.startCleaning(roomNumber);
+      // Bosqich 1: cleaning_required -> cleaning
+      const start = housekeeping.startCleaning(roomNumber, 'TestCleaner');
       if (!start.success) return fail(`startCleaning: ${start.error}`);
-      if (store.getRoom(roomNumber).status !== 'cleaning') return fail('Tozalanmoqda holati o\'rnatilmadi');
+      if (store.getRoom(roomNumber).status !== 'cleaning') return fail('cleaning holati o\'rnatilmadi');
 
-      const done = housekeeping.markClean(roomNumber);
+      // Bosqich 2: cleaning -> inspection
+      const done = housekeeping.markClean(roomNumber, 'TestCleaner');
       if (!done.success) return fail(`markClean: ${done.error}`);
-      if (store.getRoom(roomNumber).status !== 'clean') return fail('Toza holati o\'rnatilmadi');
+      if (store.getRoom(roomNumber).status !== 'inspection') return fail('inspection holati o\'rnatilmadi');
 
-      return pass(`Xona ${roomNumber}: dirty -> cleaning -> clean`, { roomNumber });
+      // Bosqich 3: inspection -> available (qabul tasdiqlaydi)
+      const confirmed = reception.confirmAvailable(roomNumber);
+      if (!confirmed.success) return fail(`confirmAvailable: ${confirmed.error}`);
+      if (store.getRoom(roomNumber).status !== 'available') return fail('available holatiga o\'tmadi');
+
+      return pass(
+        `Xona ${roomNumber}: cleaning_required → cleaning → inspection → available`,
+        { roomNumber },
+      );
     },
   },
 
@@ -123,7 +128,7 @@ const SCENARIOS = {
   'TS-04': {
     id: 'TS-04',
     title: 'Xona xizmati buyurtmasi — 2 ta qahva va sandvich',
-    description: 'Buyurtma Qabul qilindi -> Tayyorlanmoqda -> Yetkazilmoqda -> Yetkazildi holatlari orqali o\'tadi.',
+    description: 'Buyurtma Qabul → Tayyorlanmoqda → Yetkazilmoqda → Yetkazildi holatlari orqali o\'tadi.',
     run: async () => {
       const checkIn = reception.checkIn({
         guestName: 'Test Mehmon TS-04', roomType: 'single', nights: 1,
@@ -144,45 +149,57 @@ const SCENARIOS = {
         return fail(`Jami noto'g'ri: kutilgan ${30000 * 2 + 65000}, olindi ${order.order.total}`);
       }
 
-      // 3 ta keyingi bosqich
-      const a1 = roomService.advanceOrder(order.order.id);
-      const a2 = roomService.advanceOrder(order.order.id);
+      roomService.advanceOrder(order.order.id);
+      roomService.advanceOrder(order.order.id);
       const a3 = roomService.advanceOrder(order.order.id);
-      if (!a3.success || a3.order.status !== 'delivered') return fail('Yetkazildi holatiga o\'tmadi');
+      if (!a3.success || a3.order.status !== 'delivered') return fail('delivered holatiga o\'tmadi');
 
-      // Cleanup
-      reception.checkOut(roomNumber);
-      housekeeping.markClean(roomNumber);
-
-      return pass(`Buyurtma ${order.order.id} yetkazildi (jami: ${order.order.total.toLocaleString()} UZS)`,
-        { order: order.order });
+      fullReset(roomNumber);
+      return pass(
+        `Buyurtma ${order.order.id} yetkazildi (jami: ${order.order.total.toLocaleString()} UZS)`,
+        { order: order.order },
+      );
     },
   },
 
   // -------------------------------------------------------------------------
   'TS-05': {
     id: 'TS-05',
-    title: 'Texnik xizmat: singan dush, shoshilinchlik Kritik',
-    description: 'Muammo texnik xizmat ustuvorlik navbatining oldiga kiradi va keyingi mavjud texnikka tayinlanadi.',
+    title: 'Texnik xizmat: singan dush, shoshilinchlik Kritik (4-bosqichli workflow)',
+    description: 'open → acknowledged → in_progress → resolved. Kritik so\'rov navbat oldida bo\'ladi.',
     run: async () => {
       const result = maintenance.report({
         roomNumber: 105,
         description: 'TS-05: 105-xonada dush singan, suv tushmayapti',
         urgency: 'critical',
         category: 'plumbing',
-      });
+      }, 'Test');
       if (!result.success) return fail(result.error);
+
+      // Status 'open' bo'lishi kerak
+      if (result.request.status !== 'open') {
+        return fail(`Yangi so'rov status 'open' emas: ${result.request.status}`);
+      }
+
+      // Navbat oldida bo'lishi kerak (kritik)
       const queue = maintenance.getQueue();
       const first = queue[0];
-      if (first.id !== result.request.id && first.urgency !== 'critical') {
-        return fail('Kritik so\'rov navbat oldida emas');
-      }
-      if (!result.request.assignedTo) return fail('Texnikka tayinlanmadi');
+      if (first.id !== result.request.id) return fail('Kritik so\'rov navbat oldida emas');
 
-      // Cleanup
-      maintenance.resolve(result.request.id, 'Test cleanup');
-      return pass(`So'rov ${result.request.id} tayinlandi (texnik: ${result.request.assignedToName})`,
-        { request: result.request, queuePosition: 0 });
+      // 4-bosqichli o'tish
+      const ack = maintenance.acknowledge(result.request.id, 'TestTech');
+      if (!ack.success || ack.request.status !== 'acknowledged') return fail(`acknowledge: ${ack.error || ack.request.status}`);
+
+      const started = maintenance.start(result.request.id, 'TestTech');
+      if (!started.success || started.request.status !== 'in_progress') return fail(`start: ${started.error || started.request.status}`);
+
+      const resolved = maintenance.resolve(result.request.id, 'Test cleanup', 'TestTech');
+      if (!resolved.success || resolved.request.status !== 'resolved') return fail(`resolve: ${resolved.error || resolved.request.status}`);
+
+      return pass(
+        `So'rov ${result.request.id}: open → acknowledged → in_progress → resolved`,
+        { request: resolved.request },
+      );
     },
   },
 
@@ -201,11 +218,8 @@ const SCENARIOS = {
       if (!a.success || !b.success) return fail('Birinchi yoki ikkinchi check-in muvaffaqiyatsiz');
       if (a.room.number === b.room.number) return fail('Ikki mehmonga bir xil xona tayinlandi!');
 
-      // Cleanup
-      reception.checkOut(a.room.number); housekeeping.markClean(a.room.number);
-      reception.checkOut(b.room.number); housekeeping.markClean(b.room.number);
-
-      return pass(`A -> ${a.room.number}, B -> ${b.room.number} (farqli xonalar)`,
+      fullReset(a.room.number); fullReset(b.room.number);
+      return pass(`A → ${a.room.number}, B → ${b.room.number} (farqli xonalar)`,
         { roomA: a.room.number, roomB: b.room.number });
     },
   },
@@ -216,10 +230,8 @@ const SCENARIOS = {
     title: 'So\'ralgan turdagi barcha xonalar band',
     description: 'Tizim aniq "xonalar mavjud emas" xabarini qaytaradi. Ishdan chiqish yo\'q.',
     run: async () => {
-      // Barcha "suite" xonalarini band qilamiz (faqat 2 ta suite bor: 204, 205)
-      // 204 demo mehmoni bilan band, 205ni biz band qilamiz
       const fillers = [];
-      const suites = store.getRooms().filter((r) => r.type === 'suite' && r.status === 'clean');
+      const suites = store.getRooms().filter((r) => r.type === 'suite' && r.status === 'available');
       for (const s of suites) {
         const ci = reception.checkIn({
           guestName: `TS-07 Filler ${s.number}`, roomType: 'suite', nights: 1, proximityPreference: 'none',
@@ -231,14 +243,10 @@ const SCENARIOS = {
         guestName: 'TS-07 Asosiy', roomType: 'suite', nights: 1, proximityPreference: 'none',
       });
 
-      // Cleanup
-      for (const n of fillers) {
-        reception.checkOut(n);
-        housekeeping.markClean(n);
-      }
+      for (const n of fillers) fullReset(n);
 
       if (result.success) return fail('Tizim band xonani tayinladi (xato!)');
-      if (!result.error || !result.error.includes('band')) {
+      if (!result.error || !result.error.match(/band|tayyor|emas/i)) {
         return fail(`Aniq xato xabari kutilgan, olindi: "${result.error}"`);
       }
       return pass(`Tizim to'g'ri rad etdi: "${result.error}"`, { error: result.error });
@@ -253,42 +261,21 @@ const SCENARIOS = {
     run: async () => {
       const { validateCheckIn, validateRoomNumber } = require('../utils/validator');
 
-      // Noto'g'ri xona raqami
-      try {
-        validateRoomNumber(999);
-        return fail('999-xona qabul qilindi (xato!)');
-      } catch (err) { /* kutilgan */ }
+      try { validateRoomNumber(999); return fail('999-xona qabul qilindi (xato!)'); } catch (_) {}
+      try { validateCheckIn({ guestName: '', roomType: 'single', nights: 1 }); return fail('Bo\'sh ism qabul qilindi'); } catch (_) {}
+      try { validateCheckIn({ guestName: '<script>alert(1)</script>', roomType: 'single', nights: 1 }); return fail('XSS qabul qilindi'); } catch (_) {}
+      try { validateCheckIn({ guestName: 'Test', roomType: 'single', nights: -5 }); return fail('Manfiy tun qabul qilindi'); } catch (_) {}
 
-      // Bo'sh ism
-      try {
-        validateCheckIn({ guestName: '', roomType: 'single', nights: 1 });
-        return fail('Bo\'sh ism qabul qilindi (xato!)');
-      } catch (err) { /* kutilgan */ }
-
-      // XSS urinishi
-      try {
-        validateCheckIn({ guestName: '<script>alert(1)</script>', roomType: 'single', nights: 1 });
-        return fail('XSS qabul qilindi (xato!)');
-      } catch (err) { /* kutilgan */ }
-
-      // Noto'g'ri tun soni
-      try {
-        validateCheckIn({ guestName: 'Test', roomType: 'single', nights: -5 });
-        return fail('Manfiy tun qabul qilindi (xato!)');
-      } catch (err) { /* kutilgan */ }
-
-      // Tizim hali ham ishlayotganligini tekshiramiz
-      const okCheckIn = reception.checkIn({
+      const ok = reception.checkIn({
         guestName: 'TS-08 Yaxshi mehmon', roomType: 'single', nights: 1, proximityPreference: 'none',
       });
-      if (!okCheckIn.success) return fail('Tekshiruv xatosidan keyin tizim buzildi');
+      if (!ok.success) return fail('Tekshiruv xatosidan keyin tizim buzildi');
+      fullReset(ok.room.number);
 
-      // Cleanup
-      reception.checkOut(okCheckIn.room.number);
-      housekeeping.markClean(okCheckIn.room.number);
-
-      return pass('Tizim 4 ta noto\'g\'ri kiritishni rad etdi va keyingi to\'g\'ri kiritishni qabul qildi',
-        { rejectedInputs: 4 });
+      return pass(
+        'Tizim 4 ta noto\'g\'ri kiritishni rad etdi va keyingi to\'g\'ri kiritishni qabul qildi',
+        { rejectedInputs: 4 },
+      );
     },
   },
 };
@@ -322,13 +309,10 @@ async function runAll() {
 
 function listScenarios() {
   return Object.values(SCENARIOS).map((s) => ({
-    id: s.id,
-    title: s.title,
-    description: s.description,
+    id: s.id, title: s.title, description: s.description,
   }));
 }
 
-// CLI orqali ishga tushganda
 if (require.main === module) {
   (async () => {
     console.log('\n=== HotelOS Test Stsenariylari (TS-01 ... TS-08) ===\n');
