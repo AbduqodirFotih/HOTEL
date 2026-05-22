@@ -115,7 +115,7 @@ router.get('/housekeeping/queue', requireAuth, requirePermission('housekeeping.q
 router.post('/housekeeping/start/:roomNumber', requireAuth, requirePermission('housekeeping.start'), (req, res) => {
   try {
     const roomNumber = validateRoomNumber(req.params.roomNumber);
-    const result = housekeeping.startCleaning(roomNumber);
+    const result = housekeeping.startCleaning(roomNumber, req.session.displayName || req.session.username);
     if (!result.success) return res.status(409).json({ error: result.error });
     res.json(result);
   } catch (err) { handleError(res, err); }
@@ -124,7 +124,7 @@ router.post('/housekeeping/start/:roomNumber', requireAuth, requirePermission('h
 router.post('/housekeeping/complete/:roomNumber', requireAuth, requirePermission('housekeeping.complete'), (req, res) => {
   try {
     const roomNumber = validateRoomNumber(req.params.roomNumber);
-    const result = housekeeping.markClean(roomNumber);
+    const result = housekeeping.markClean(roomNumber, req.session.displayName || req.session.username);
     if (!result.success) return res.status(409).json({ error: result.error });
     res.json(result);
   } catch (err) { handleError(res, err); }
@@ -136,6 +136,28 @@ router.post('/housekeeping/queue/:roomNumber', requireAuth, requirePermission('h
     const result = housekeeping.addToCleaningQueue(roomNumber, 'manual');
     if (!result) return res.status(409).json({ error: 'Xona navbatga qo\'shilmadi (allaqachon navbatda yoki band)' });
     res.json({ success: true, entry: result });
+  } catch (err) { handleError(res, err); }
+});
+
+// ============================================================================
+// RECEPTION QO'SHIMCHA AMALLARI (tasdiqlash, qo'lda belgilash)
+// ============================================================================
+
+router.post('/reception/confirm-available/:roomNumber', requireAuth, requirePermission('reception.confirm_available'), (req, res) => {
+  try {
+    const roomNumber = validateRoomNumber(req.params.roomNumber);
+    const result = reception.confirmAvailable(roomNumber);
+    if (!result.success) return res.status(409).json({ error: result.error });
+    res.json(result);
+  } catch (err) { handleError(res, err); }
+});
+
+router.post('/reception/mark-needs-cleaning/:roomNumber', requireAuth, requirePermission('reception.mark_needs_cleaning'), (req, res) => {
+  try {
+    const roomNumber = validateRoomNumber(req.params.roomNumber);
+    const result = reception.markNeedsCleaning(roomNumber);
+    if (!result.success) return res.status(409).json({ error: result.error });
+    res.json(result);
   } catch (err) { handleError(res, err); }
 });
 
@@ -193,14 +215,26 @@ router.get('/maintenance/queue', requireAuth, requirePermission('maintenance.vie
 router.post('/maintenance', requireAuth, requirePermission('maintenance.report'), (req, res) => {
   try {
     const data = validateMaintenance(req.body);
-    const result = maintenance.report(data);
+    const result = maintenance.report(data, req.session.displayName || req.session.username);
     if (!result.success) return res.status(409).json({ error: result.error });
     res.json(result);
   } catch (err) { handleError(res, err); }
 });
 
+router.post('/maintenance/:id/acknowledge', requireAuth, requirePermission('maintenance.acknowledge'), (req, res) => {
+  const result = maintenance.acknowledge(req.params.id, req.session.displayName || req.session.username);
+  if (!result.success) return res.status(409).json({ error: result.error });
+  res.json(result);
+});
+
+router.post('/maintenance/:id/start', requireAuth, requirePermission('maintenance.start'), (req, res) => {
+  const result = maintenance.start(req.params.id, req.session.displayName || req.session.username);
+  if (!result.success) return res.status(409).json({ error: result.error });
+  res.json(result);
+});
+
 router.post('/maintenance/:id/resolve', requireAuth, requirePermission('maintenance.resolve'), (req, res) => {
-  const result = maintenance.resolve(req.params.id, req.body?.notes || '');
+  const result = maintenance.resolve(req.params.id, req.body?.notes || '', req.session.displayName || req.session.username);
   if (!result.success) return res.status(409).json({ error: result.error });
   res.json(result);
 });
