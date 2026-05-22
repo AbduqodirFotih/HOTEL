@@ -1,15 +1,16 @@
 /**
  * maintenanceService.js
  * --------------------------------------------------------------------------
- * Texnik Xizmat Servisi. Vazifalar:
- *   - Texnik xizmat so'rovlarini qabul qilish
- *   - Ustuvorlik navbati (PriorityQueue) ga qo'shish
- *   - Keyingi bo'sh texnikka avtomatik tayinlash
- *   - Hal qilingan so'rovlarni yopish
+ * Texnik Xizmat Servisi.
  *
- * Shoshilinchlik darajalari (yuqori -> past):
- *   critical -> high -> normal -> low
- * Bir xil darajada — avval topshirilgan ustun keladi (FIFO tie-breaker).
+ * Status workflow (4 bosqich):
+ *   open          : Yangi so'rov, hech kim ko'rmagan
+ *   acknowledged  : Texnik so'rovni ko'rdi va qabul qildi
+ *   in_progress   : Texnik xizmat ko'rsatmoqda
+ *   resolved      : Hal qilindi
+ *
+ * Ustuvorlik darajalari: critical > high > normal > low
+ * Bir xil darajada — avval topshirilgani ustun keladi (FIFO).
  * --------------------------------------------------------------------------
  */
 
@@ -33,16 +34,17 @@ class MaintenanceService {
     logger.info('[MAINTENANCE] Servis ishga tushdi');
   }
 
-  /** Servis qayta ishga tushganda saqlangan ochiq so'rovlarni navbatga qayta yuklaymiz */
   _restoreQueue() {
-    const open = store.getMaintenance().filter((r) => r.status === 'open' || r.status === 'in_progress');
+    const open = store.getMaintenance().filter(
+      (r) => r.status === 'open' || r.status === 'acknowledged' || r.status === 'in_progress'
+    );
     for (const req of open) {
       this.queue.enqueue(req, req.urgency, req.submittedAt);
     }
   }
 
-  /** Yangi texnik xizmat so'rovi */
-  report({ roomNumber, description, urgency, category }) {
+  /** Yangi texnik xizmat so'rovi — statusi 'open' (texnik ko'rmagan) */
+  report({ roomNumber, description, urgency, category }, byUser = 'system') {
     const room = store.getRoom(roomNumber);
     if (!room) {
       return { success: false, error: `${roomNumber}-xona topilmadi` };
@@ -56,20 +58,14 @@ class MaintenanceService {
       category,
       status: 'open',
       submittedAt: Date.now(),
+      submittedBy: byUser,
       assignedTo: null,
+      assignedToName: null,
+      acknowledgedAt: null,
+      startedAt: null,
       resolvedAt: null,
+      resolutionNotes: null,
     };
-
-    // Bo'sh texnik bormi?
-    const technicians = store.getTechnicians();
-    const available = technicians.find((t) => t.available);
-    if (available) {
-      request.assignedTo = available.id;
-      request.assignedToName = available.name;
-      request.assignedAt = Date.now();
-      request.status = 'in_progress';
-      // Hozircha texnikni "band" qilmaymiz (demo) — ko'p so'rov bilan ishlay oladi
-    }
 
     store.addMaintenance(request);
     this.queue.enqueue(request, urgency, request.submittedAt);
@@ -78,7 +74,7 @@ class MaintenanceService {
     broker.publish('notification.created', {
       type: 'maintenance_reported',
       severity: urgency === 'critical' ? 'critical' : urgency === 'high' ? 'warning' : 'info',
-      message: `${roomNumber}-xona: ${description} (${urgency})`,
+      message: `Yangi texnik so'rov: ${roomNumber}-xona — ${description} (${urgency})`,
       roomNumber,
       requestId: request.id,
     });
@@ -87,27 +83,92 @@ class MaintenanceService {
     return { success: true, request };
   }
 
-  /** Texnik xizmat so'rovini hal etish */
-  resolve(requestId, notes = '') {
+  /** Texnik so'rovni ko'rdi va qabul qildi: open -> acknowledged */
+  acknowledge(requestId, byUser = 'system') {
+    const req = store.getMaintenance().find((r) => r.id === requestId);
+    if (!req) return { success: false, error: 'So\'rov topilmadi' };
+    if (req.status !== 'open') {
+      return { success: false, error: `So'rov 'open' holatida emas (joriy: ${req.status})` };
+    }
+
+    // Tayinlangan texnikni topamiz
+    const technicians = store.getTechnicians();
+    const tech = technicians.find((t) => t.name === byUser || t.id === byUser)
+              || technicians.find((t) => t.available)
+              || { id: 'tech_unknown', name: byUser };
+
+    store.updateMaintenance(requestId, {
+      status: 'acknowledged',
+      acknowledgedAt: Date.now(),
+      assignedTo: tech.id,
+      assignedToName: tech.name,
+    });
+    const updated = store.getMaintenance().find((r) => r.id === requestId);
+
+    broker.publish('maintenance.status_changed', {
+      request: updated, oldStatus: 'open', newStatus: 'acknowledged',
+    });
+
+    logger.info(`[MAINTENANCE] ${requestId} qabul qilindi (${tech.name})`);
+    return { success: true, request: updated };
+  }
+
+  /** Texnik ishni boshladi: acknowledged -> in_progress */
+  start(requestId, byUser = 'system') {
+    const req = store.getMaintenance().find((r) => r.id === requestId);
+    if (!req) return { success: false, error: 'So\'rov topilmadi' };
+    if (req.status !== 'acknowledged' && req.status !== 'open') {
+      return { success: false, error: `So'rovni boshlab bo'lmaydi (joriy: ${req.status})` };
+    }
+
+    // Agar 'open' bo'lsa, avval acknowledge qilamiz
+    if (req.status === 'open') {
+      this.acknowledge(requestId, byUser);
+    }
+
+    const oldStatus = store.getMaintenance().find((r) => r.id === requestId).status;
+    store.updateMaintenance(requestId, {
+      status: 'in_progress',
+      startedAt: Date.now(),
+    });
+    const updated = store.getMaintenance().find((r) => r.id === requestId);
+
+    broker.publish('maintenance.status_changed', {
+      request: updated, oldStatus, newStatus: 'in_progress',
+    });
+
+    logger.info(`[MAINTENANCE] ${requestId} jarayonda (${byUser})`);
+    return { success: true, request: updated };
+  }
+
+  /** So'rovni hal qilish: in_progress -> resolved */
+  resolve(requestId, notes = '', byUser = 'system') {
     const req = store.getMaintenance().find((r) => r.id === requestId);
     if (!req) return { success: false, error: 'So\'rov topilmadi' };
     if (req.status === 'resolved') return { success: false, error: 'So\'rov allaqachon hal etilgan' };
 
-    const oldStatus = req.status;
-    store.updateMaintenance(requestId, {
+    // Agar avvalgi bosqichlar bajarilmagan bo'lsa, ularni avtomatik to'ldiramiz
+    const now = Date.now();
+    const patch = {
       status: 'resolved',
-      resolvedAt: Date.now(),
+      resolvedAt: now,
       resolutionNotes: notes,
-    });
+      resolvedBy: byUser,
+    };
+    if (!req.acknowledgedAt) patch.acknowledgedAt = now;
+    if (!req.startedAt) patch.startedAt = now;
+
+    const oldStatus = req.status;
+    store.updateMaintenance(requestId, patch);
     const updated = store.getMaintenance().find((r) => r.id === requestId);
 
-    // Navbatdan olib tashlaymiz
     this.queue.remove((r) => r.id === requestId);
 
+    // Statistika
+    store.incrementStat('totalMaintenanceResolved');
+
     broker.publish('maintenance.status_changed', {
-      request: updated,
-      oldStatus,
-      newStatus: 'resolved',
+      request: updated, oldStatus, newStatus: 'resolved',
     });
     broker.publish('notification.created', {
       type: 'maintenance_resolved',
@@ -121,12 +182,12 @@ class MaintenanceService {
     return { success: true, request: updated };
   }
 
-  /** Joriy ochiq navbat (ustuvorlik tartibida) */
+  /** Joriy ochiq navbat */
   getQueue() {
-    return this.queue.toArray();
+    return this.queue.toArray().filter((r) => r.status !== 'resolved');
   }
 
-  /** Barcha so'rovlar (tarix bilan) */
+  /** Barcha so'rovlar */
   getAll() {
     return store.getMaintenance();
   }

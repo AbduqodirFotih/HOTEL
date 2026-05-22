@@ -20,9 +20,10 @@
 function assignRoom(rooms, criteria) {
   const { roomType, floorPreference = null, proximityPreference = 'none' } = criteria;
 
-  // 1-bosqich: Xona turi va tozalik holati bo'yicha qat'iy filtr
+  // 1-bosqich: Xona turi va holati bo'yicha qat'iy filtr
+  // Faqat 'available' (bo'sh va tayyor) xonalar nomzod bo'la oladi
   let candidates = rooms.filter(
-    (r) => r.type === roomType && r.status === 'clean'
+    (r) => r.type === roomType && r.status === 'available'
   );
 
   if (candidates.length === 0) {
@@ -36,7 +37,7 @@ function assignRoom(rooms, criteria) {
     }
     return {
       room: null,
-      reason: `Barcha ${roomType} xonalar band yoki tozalanmagan. Iltimos, muqobil turni tanlang yoki kutish ro'yxatiga qo'shing.`,
+      reason: `Barcha ${roomType} xonalar band yoki hozircha tayyor emas. Iltimos, muqobil turni tanlang yoki kutish ro'yxatiga qo'shing.`,
     };
   }
 

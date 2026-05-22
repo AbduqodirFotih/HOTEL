@@ -2,16 +2,13 @@
  * housekeepingService.js
  * --------------------------------------------------------------------------
  * Tozalash Servisi. Vazifalar:
- *   - Brokerdan 'guest.checked_out' xabarlarini qabul qiladi (subscribe)
- *   - Xonalarni tozalash navbatiga (FIFO Queue) qo'shadi
+ *   - 'guest.checked_out' va 'room.cleaning_required' hodisalarini qabul qilish
+ *   - Xonalarni tozalash navbatiga (FIFO) qo'shish
  *   - Tozalovchilarga avtomatik tayinlash
- *   - Xona holatlarini boshqarish: dirty -> cleaning -> clean
- *   - Har bir holat o'zgarishini brokerga nashr etadi
+ *   - Holat o'tishlari: cleaning_required -> cleaning -> inspection
  *
- * 12 soatlik qoida:
- *   - Notification servisi davriy ravishda toza turgan xonalarni tekshiradi
- *   - Threshold dan oshganlar uchun avtomatik 'iflos' bayrog'i qo'yiladi
- *     (yoki bildirishnoma yuboriladi — sozlamaga qarab)
+ * Eslatma: markClean endi xonani 'available' emas, 'inspection' holatiga
+ * o'tkazadi. Qabul xodimi tasdiqlaganidan keyin 'available' bo'ladi.
  * --------------------------------------------------------------------------
  */
 
@@ -24,39 +21,58 @@ const logger = require('../utils/logger');
 class HousekeepingService {
   constructor() {
     this.name = 'housekeeping';
-    this.cleaningQueue = []; // FIFO navbat (massiv sifatida)
+    this.cleaningQueue = []; // FIFO navbat
     this._subscribe();
+    this._restoreQueueFromStore();
     logger.info('[HOUSEKEEPING] Servis ishga tushdi');
   }
 
   _subscribe() {
-    // Mehmon check-out qilganda xonani tozalash navbatiga qo'shamiz
+    // Mehmon check-out qilganda — checkOut allaqachon statusni o'zgartirgan,
+    // biz faqat navbatga qo'shamiz
     broker.subscribe('guest.checked_out', (event) => {
       const roomNumber = event.payload.room?.number;
       if (roomNumber) {
-        this.addToCleaningQueue(roomNumber, 'guest_checkout');
+        this._enqueueWithoutStatusChange(roomNumber, 'guest_checkout');
       }
     });
 
-    // 12 soat o'tib tozalash kerakligi bildirilganda
+    // 12-soatlik tekshiruvdan
     broker.subscribe('room.cleaning_required', (event) => {
       const roomNumber = event.payload.roomNumber;
-      // Avtomatik qo'shish faqat sozlamada yoqilgan bo'lsa
-      const settings = store.getSettings();
-      if (settings.autoNotifyHousekeeping) {
-        this.addToCleaningQueue(roomNumber, 'periodic_check');
-      }
+      this._enqueueWithoutStatusChange(roomNumber, 'periodic_check');
     });
   }
 
+  /** Server qayta ishga tushganda mavjud cleaning_required xonalarni navbatga qo'shamiz */
+  _restoreQueueFromStore() {
+    for (const r of store.getRooms()) {
+      if (r.status === 'cleaning_required') {
+        this.cleaningQueue.push({
+          roomNumber: r.number,
+          reason: 'restored',
+          addedAt: r.dirtyAt || Date.now(),
+        });
+      }
+    }
+  }
+
+  /** Faqat navbatga qo'shadi, statusni o'zgartirmaydi (status allaqachon tozalash_kk) */
+  _enqueueWithoutStatusChange(roomNumber, reason) {
+    const room = store.getRoom(roomNumber);
+    if (!room) return null;
+    if (room.status !== 'cleaning_required') return null;
+    if (this.cleaningQueue.find((q) => q.roomNumber === roomNumber)) return null;
+
+    const entry = { roomNumber, reason, addedAt: Date.now() };
+    this.cleaningQueue.push(entry);
+    this._tryAssignCleaner(entry);
+    return entry;
+  }
+
   /**
-   * Xonani tozalash navbatiga qo'shadi.
-   * MUHIM: Bu yerda dastlab "yarish holati" (race condition) bor edi —
-   * 'guest.checked_out' hodisasi kechiktirilgan tarzda kelganida, agar
-   * boshqa servis allaqachon xonani 'clean' yoki 'cleaning' holatiga
-   * o'tkazib bo'lgan bo'lsa, biz uni qaytadan 'dirty' qilib qo'yardik.
-   * Tuzatish: faqat 'dirty' yoki 'manual reason' bilan kelgan toza
-   * xonalarni navbatga qo'shamiz, boshqa holatlarda statusni o'zgartirmaymiz.
+   * Qo'lda navbatga qo'shish (Reception yoki manager tomonidan).
+   * Statusni cleaning_required qiladi (agar boshqacha bo'lsa).
    */
   addToCleaningQueue(roomNumber, reason = 'manual') {
     const room = store.getRoom(roomNumber);
@@ -66,132 +82,103 @@ class HousekeepingService {
       return null;
     }
     if (room.status === 'cleaning' || room.status === 'maintenance') {
-      // Allaqachon ishlanmoqda — qayta qo'shmaymiz
       return null;
     }
     if (this.cleaningQueue.find((q) => q.roomNumber === roomNumber)) {
-      // Allaqachon navbatda
       return null;
     }
 
-    // Status 'clean' bo'lsa va sabab avtomatik checkout bo'lsa — bekor qilamiz
-    // (boshqa servis bizdan keyin tozalab ulgurgan)
-    if (room.status === 'clean' && reason === 'guest_checkout') {
-      logger.debug(`[HOUSEKEEPING] ${roomNumber} allaqachon toza, navbatga qo'shilmaydi`);
+    // Status 'available' yoki 'inspection' bo'lsa va sabab 'guest_checkout' bo'lsa, bekor qilamiz
+    if (room.status !== 'cleaning_required' && reason === 'guest_checkout') {
+      logger.debug(`[HOUSEKEEPING] ${roomNumber} allaqachon ${room.status}, navbatga qo'shilmaydi`);
       return null;
     }
 
-    // Status 'clean' bo'lsa va sabab boshqa (masalan, 12 soat o'tdi yoki manual) — dirty qilamiz
-    if (room.status !== 'dirty') {
+    // Status cleaning_required emas bo'lsa, qilamiz
+    if (room.status !== 'cleaning_required') {
       const oldStatus = room.status;
-      store.updateRoom(roomNumber, { status: 'dirty', dirtyAt: Date.now() });
+      store.updateRoom(roomNumber, { status: 'cleaning_required', dirtyAt: Date.now() });
       broker.publish('room.status_changed', {
-        roomNumber,
-        oldStatus,
-        newStatus: 'dirty',
-        changedBy: 'housekeeping',
-        reason,
+        roomNumber, oldStatus, newStatus: 'cleaning_required',
+        changedBy: 'housekeeping', reason,
       });
     }
 
-    const queueEntry = {
-      roomNumber,
-      reason,
-      addedAt: Date.now(),
-    };
-    this.cleaningQueue.push(queueEntry);
-
-    // Avtomatik tayinlash
-    this._tryAssignCleaner(queueEntry);
-
-    return queueEntry;
+    const entry = { roomNumber, reason, addedAt: Date.now() };
+    this.cleaningQueue.push(entry);
+    this._tryAssignCleaner(entry);
+    return entry;
   }
 
   _tryAssignCleaner(queueEntry) {
     const housekeepers = store.getHousekeepers();
     const free = housekeepers.find((h) => h.available);
-    if (!free) {
-      logger.info(`[HOUSEKEEPING] ${queueEntry.roomNumber} navbatda — bo'sh tozalovchi yo'q`);
-      return null;
-    }
+    if (!free) return null;
     queueEntry.assignedTo = free.id;
+    queueEntry.assignedToName = free.name;
     queueEntry.assignedAt = Date.now();
-    // Hozircha biz hech bir tozalovchini "band" qilmaymiz (demo uchun) — ular bir vaqtning o'zida
-    // ko'p xonani tozalashlari mumkin.
     return free;
   }
 
-  /** Tozalashni boshlash: dirty -> cleaning */
-  startCleaning(roomNumber) {
+  /** Tozalashni boshlash: cleaning_required -> cleaning */
+  startCleaning(roomNumber, byUser = 'system') {
     const room = store.getRoom(roomNumber);
     if (!room) return { success: false, error: `${roomNumber}-xona topilmadi` };
-    if (room.status !== 'dirty') {
-      return { success: false, error: `${roomNumber}-xona iflos emas (joriy: ${room.status})` };
-    }
-    const oldStatus = room.status;
-    store.updateRoom(roomNumber, { status: 'cleaning', cleaningStartedAt: Date.now() });
-    broker.publish('room.status_changed', {
-      roomNumber,
-      oldStatus,
-      newStatus: 'cleaning',
-      changedBy: 'housekeeping',
-    });
-    logger.info(`[HOUSEKEEPING] ${roomNumber}-xona tozalanmoqda`);
-    return { success: true, room: store.getRoom(roomNumber) };
-  }
-
-  /** Tozalashni yakunlash: cleaning -> clean */
-  markClean(roomNumber) {
-    const room = store.getRoom(roomNumber);
-    if (!room) return { success: false, error: `${roomNumber}-xona topilmadi` };
-    if (room.status !== 'cleaning' && room.status !== 'dirty') {
-      return { success: false, error: `${roomNumber}-xona tozalanmagan (joriy: ${room.status})` };
+    if (room.status !== 'cleaning_required') {
+      return { success: false, error: `${roomNumber}-xona tozalash uchun tayyor emas (joriy: ${room.status})` };
     }
     const oldStatus = room.status;
     store.updateRoom(roomNumber, {
-      status: 'clean',
+      status: 'cleaning',
+      cleaningStartedAt: Date.now(),
+      cleanedBy: byUser,
+    });
+    broker.publish('room.status_changed', {
+      roomNumber, oldStatus, newStatus: 'cleaning',
+      changedBy: 'housekeeping', actor: byUser,
+    });
+    logger.info(`[HOUSEKEEPING] ${roomNumber}-xona tozalanmoqda (${byUser})`);
+    return { success: true, room: store.getRoom(roomNumber) };
+  }
+
+  /** Tozalashni yakunlash: cleaning -> inspection (qabul tekshirishi kerak) */
+  markClean(roomNumber, byUser = 'system') {
+    const room = store.getRoom(roomNumber);
+    if (!room) return { success: false, error: `${roomNumber}-xona topilmadi` };
+    if (room.status !== 'cleaning' && room.status !== 'cleaning_required') {
+      return { success: false, error: `${roomNumber}-xona tozalanmagan (joriy: ${room.status})` };
+    }
+    const oldStatus = room.status;
+    const cleaningDurationMs = room.cleaningStartedAt ? Date.now() - room.cleaningStartedAt : null;
+
+    store.updateRoom(roomNumber, {
+      status: 'inspection',
       lastCleanedAt: Date.now(),
+      inspectionStartedAt: Date.now(),
       dirtyAt: null,
       cleaningStartedAt: null,
+      lastCleaningDurationMs: cleaningDurationMs,
+      lastCleanedBy: byUser,
     });
 
     // Navbatdan olib tashlaymiz
     this.cleaningQueue = this.cleaningQueue.filter((q) => q.roomNumber !== roomNumber);
 
-    broker.publish('room.status_changed', {
-      roomNumber,
-      oldStatus,
-      newStatus: 'clean',
-      changedBy: 'housekeeping',
-    });
+    // Statistikani yangilaymiz
+    store.incrementStat('totalCleanings');
 
-    // "Tozalandi" bildirishnomasi (har 12 soatlik tsikl talabi uchun)
+    broker.publish('room.status_changed', {
+      roomNumber, oldStatus, newStatus: 'inspection',
+      changedBy: 'housekeeping', actor: byUser,
+    });
     broker.publish('notification.created', {
-      type: 'room_cleaned',
+      type: 'inspection_required',
       severity: 'info',
-      message: `${roomNumber}-xona tozalandi va mehmon qabul qilishga tayyor.`,
+      message: `${roomNumber}-xona tozalandi va qabul tomonidan tekshirilishi kutilmoqda`,
       roomNumber,
     });
 
-    logger.info(`[HOUSEKEEPING] ${roomNumber}-xona TOZA deb belgilandi`);
-    return { success: true, room: store.getRoom(roomNumber) };
-  }
-
-  /** Xonani texnik xizmatga belgilash */
-  markMaintenance(roomNumber) {
-    const room = store.getRoom(roomNumber);
-    if (!room) return { success: false, error: `${roomNumber}-xona topilmadi` };
-    if (room.status === 'occupied') {
-      return { success: false, error: `${roomNumber}-xona band, mehmon chiqishi kerak` };
-    }
-    const oldStatus = room.status;
-    store.updateRoom(roomNumber, { status: 'maintenance' });
-    broker.publish('room.status_changed', {
-      roomNumber,
-      oldStatus,
-      newStatus: 'maintenance',
-      changedBy: 'housekeeping',
-    });
+    logger.info(`[HOUSEKEEPING] ${roomNumber}-xona tozalandi -> TEKSHIRUVDA`);
     return { success: true, room: store.getRoom(roomNumber) };
   }
 

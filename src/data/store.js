@@ -36,8 +36,8 @@ class Store {
       try {
         const raw = fs.readFileSync(DATA_FILE, 'utf-8');
         this.state = JSON.parse(raw);
-        // Asosiy maydonlar mavjudligini ta'minlaymiz (eski faylda yetishmasligi mumkin)
         this._ensureFields();
+        this._migrateStatuses(); // Eski versiyalardagi status nomlarini yangilaymiz
         logger.info(`[STORE] data.json dan yuklandi (${this.state.rooms.length} xona)`);
         return;
       } catch (err) {
@@ -45,6 +45,29 @@ class Store {
       }
     }
     this._seed();
+  }
+
+  /**
+   * Eski status nomlarini yangilarga ko'chiramiz. Bu shunda kerakki, agar
+   * foydalanuvchida oldingi versiyaning data.json fayli bo'lsa, dastur
+   * to'g'ri ishlasin.
+   */
+  _migrateStatuses() {
+    const map = {
+      'clean': 'available',
+      'dirty': 'cleaning_required',
+    };
+    let migrated = 0;
+    for (const room of this.state.rooms) {
+      if (map[room.status]) {
+        room.status = map[room.status];
+        migrated++;
+      }
+    }
+    if (migrated > 0) {
+      logger.info(`[STORE] Eski statuslardan ${migrated} ta xona ko'chirildi`);
+      this.scheduleSave();
+    }
   }
 
   _seed() {

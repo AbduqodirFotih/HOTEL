@@ -3,16 +3,16 @@
  * --------------------------------------------------------------------------
  * Qabul Servisi. Vazifalar:
  *   - Mehmonni check-in qilish (xona tayinlash algoritmini ishga tushiradi)
- *   - Mehmonni check-out qilish (hisob-kitob algoritmini ishga tushiradi)
- *   - Xona inventari so'rovlarini boshqarish
+ *   - Mehmonni check-out qilish (hisob-kitob, xona "Tozalash kerak" bo'ladi)
+ *   - "Tekshiruvda" turgan xonalarni "Bo'sh" deb tasdiqlash (yangi)
+ *   - Manual ravishda xonani "Tozalash kerak" deb belgilash (yangi)
  *
- * Hodisalar nashr etadi:
- *   - guest.checked_in
- *   - guest.checked_out
- *   - room.status_changed
+ * Workflow:
+ *   available -> [check-in] -> occupied -> [check-out] -> cleaning_required
+ *   inspection -> [confirm-available] -> available
  *
- * Bu servis Tozalash yoki boshqa servislarni TO'G'RIDAN-TO'G'RI chaqirmaydi.
- * Faqat broker orqali xabar tarqatadi.
+ * Hodisalar nashr etadi: guest.checked_in, guest.checked_out,
+ *                        room.status_changed
  * --------------------------------------------------------------------------
  */
 
@@ -37,10 +37,7 @@ class ReceptionService {
 
   /**
    * Mehmonni check-in qilish.
-   * 1) Xona tayinlash algoritmini ishga tushiradi
-   * 2) Mehmon yozuvi yaratadi
-   * 3) Xona holatini "occupied" ga o'zgartiradi
-   * 4) Hodisalarni nashr etadi
+   * Algoritm 'available' statusidagi xonalardan eng yaxshini tanlaydi.
    */
   checkIn(criteria) {
     const rooms = store.getRooms();
@@ -67,7 +64,6 @@ class ReceptionService {
 
     store.addGuest(guest);
 
-    // Xona holatini yangilash
     const oldStatus = room.status;
     store.updateRoom(room.number, {
       status: 'occupied',
@@ -77,11 +73,11 @@ class ReceptionService {
 
     store.incrementStat('totalCheckIns');
 
-    // Hodisalarni nashr etamiz
     broker.publish('guest.checked_in', {
       guest,
       room: { number: room.number, type: room.type, floor: room.floor },
       assignmentReason: reason,
+      actor: 'reception',
     });
 
     broker.publish('room.status_changed', {
@@ -103,11 +99,7 @@ class ReceptionService {
 
   /**
    * Mehmonni check-out qilish.
-   * 1) Hisob-kitob algoritmini ishga tushiradi
-   * 2) Mehmon yozuvini olib tashlaydi
-   * 3) Xona holatini "dirty" ga o'zgartiradi
-   * 4) "room.status_changed" va "guest.checked_out" hodisalarini nashr etadi
-   *    -> Tozalash servisi xabarni qabul qiladi
+   * Xona statusi 'cleaning_required' ga o'tadi va tozalovchiga bildirishnoma yuboriladi.
    */
   checkOut(roomNumber, { extraCharges, discount } = {}) {
     const room = store.getRoom(roomNumber);
@@ -123,7 +115,6 @@ class ReceptionService {
       return { success: false, error: `${roomNumber}-xonada mehmon yozuvi yo'q` };
     }
 
-    // Qo'shimcha to'lovlarni mehmon yozuviga qo'shamiz
     const allExtras = [...(guest.extraCharges || []), ...(extraCharges || [])];
 
     const bill = calculateBill({
@@ -134,31 +125,122 @@ class ReceptionService {
       discount,
     });
 
-    // Mehmonni olib tashlaymiz, xona "iflos" bo'ladi
     store.removeGuest(guest.id);
     const oldStatus = room.status;
     store.updateRoom(roomNumber, {
-      status: 'dirty',
+      status: 'cleaning_required',
       occupiedBy: null,
       occupiedAt: null,
       dirtyAt: Date.now(),
+      lastCheckOutAt: Date.now(),
+      lastGuestName: guest.name, // tarix uchun saqlaymiz
     });
 
     store.incrementStat('totalCheckOuts');
     store.incrementStat('totalRevenue', bill.total);
 
-    // Hodisalar
     broker.publish('guest.checked_out', { guest, room: { number: roomNumber }, bill });
     broker.publish('room.status_changed', {
       roomNumber,
       oldStatus,
-      newStatus: 'dirty',
+      newStatus: 'cleaning_required',
       changedBy: 'reception',
+      reason: 'check_out',
+    });
+    broker.publish('notification.created', {
+      type: 'cleaning_required',
+      severity: 'warning',
+      message: `${roomNumber}-xona bo'shadi va tozalanishi kerak (${guest.name} chiqdi)`,
+      roomNumber,
     });
 
-    logger.info(`[RECEPTION] Check-out: ${guest.name} (${roomNumber}) -> ${bill.total.toLocaleString()} UZS`);
+    logger.info(`[RECEPTION] Check-out: ${guest.name} (${roomNumber}) -> ${bill.total.toLocaleString()} UZS, xona tozalash kerak`);
 
     return { success: true, bill };
+  }
+
+  /**
+   * "Tekshiruvda" turgan xonani "Bo'sh va tayyor" deb tasdiqlash.
+   * Qabul xodimi tozalanganini ko'rib tasdiqlaganidan keyin yangi mehmonlar uchun ochiladi.
+   */
+  confirmAvailable(roomNumber) {
+    const room = store.getRoom(roomNumber);
+    if (!room) {
+      return { success: false, error: `${roomNumber}-xona topilmadi` };
+    }
+    if (room.status !== 'inspection') {
+      return {
+        success: false,
+        error: `${roomNumber}-xona tekshiruvda emas (joriy: ${room.status}). Avval tozalovchi yakunlashi kerak.`,
+      };
+    }
+
+    const oldStatus = room.status;
+    store.updateRoom(roomNumber, {
+      status: 'available',
+      inspectionStartedAt: null,
+      availableSince: Date.now(),
+    });
+
+    broker.publish('room.status_changed', {
+      roomNumber,
+      oldStatus,
+      newStatus: 'available',
+      changedBy: 'reception',
+      reason: 'inspection_confirmed',
+    });
+    broker.publish('notification.created', {
+      type: 'room_available',
+      severity: 'success',
+      message: `${roomNumber}-xona tekshirildi va yangi mehmonlar uchun tayyor`,
+      roomNumber,
+    });
+
+    logger.info(`[RECEPTION] ${roomNumber}-xona tasdiqlandi: AVAILABLE`);
+    return { success: true, room: store.getRoom(roomNumber) };
+  }
+
+  /**
+   * Manual ravishda xonani "Tozalash kerak" deb belgilash.
+   * Foydalanish holati: mehmon chiqarmasdan, lekin xona iflos bo'lib qolgan.
+   */
+  markNeedsCleaning(roomNumber, reason = 'manual') {
+    const room = store.getRoom(roomNumber);
+    if (!room) {
+      return { success: false, error: `${roomNumber}-xona topilmadi` };
+    }
+    if (room.status === 'occupied') {
+      return { success: false, error: `${roomNumber}-xona band — avval mehmon chiqishi kerak` };
+    }
+    if (room.status === 'cleaning_required' || room.status === 'cleaning') {
+      return { success: false, error: `${roomNumber}-xona allaqachon tozalanmoqda yoki navbatda` };
+    }
+    if (room.status === 'maintenance') {
+      return { success: false, error: `${roomNumber}-xona texnik xizmatda` };
+    }
+
+    const oldStatus = room.status;
+    store.updateRoom(roomNumber, {
+      status: 'cleaning_required',
+      dirtyAt: Date.now(),
+    });
+
+    broker.publish('room.status_changed', {
+      roomNumber,
+      oldStatus,
+      newStatus: 'cleaning_required',
+      changedBy: 'reception',
+      reason,
+    });
+    broker.publish('notification.created', {
+      type: 'cleaning_required',
+      severity: 'warning',
+      message: `${roomNumber}-xona tozalash kerakligi qo'lda belgilandi`,
+      roomNumber,
+    });
+
+    logger.info(`[RECEPTION] ${roomNumber}-xona qo'lda tozalash kerakligi belgilandi`);
+    return { success: true, room: store.getRoom(roomNumber) };
   }
 
   /** Inventar so'rovi — barcha xonalar holati */
@@ -166,10 +248,11 @@ class ReceptionService {
     const rooms = store.getRooms();
     const summary = {
       total: rooms.length,
-      clean: 0,
-      dirty: 0,
-      cleaning: 0,
+      available: 0,
       occupied: 0,
+      cleaning_required: 0,
+      cleaning: 0,
+      inspection: 0,
       maintenance: 0,
     };
     for (const r of rooms) summary[r.status] = (summary[r.status] || 0) + 1;
