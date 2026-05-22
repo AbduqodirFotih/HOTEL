@@ -802,6 +802,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .status-clean       { background: var(--status-clean-bg);       color: var(--status-clean-text); }
 .status-dirty       { background: var(--status-dirty-bg);       color: var(--status-dirty-text); }
 .status-cleaning    { background: var(--status-cleaning-bg);    color: var(--status-cleaning-text); }
+.status-cleaned     { background: #FEF3C7; color: #92400E; }
 .status-maintenance { background: var(--status-maintenance-bg); color: var(--status-maintenance-text); }
 .status-occupied    { background: var(--status-occupied-bg);    color: var(--status-occupied-text); }
 
@@ -1731,3 +1732,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
   opacity: 0.5;
   pointer-events: none;
 }
+
+/* ============================================================
+   YANGI STATUS NOMLARI (cleaning_required, inspection, available)
+   ============================================================ */
+.status-available         { background: var(--status-clean-bg);       color: var(--status-clean-text); }
+.status-cleaning_required { background: var(--status-dirty-bg);       color: var(--status-dirty-text); }
+.status-inspection        { background: #FEF3C7;                       color: #92400E; }

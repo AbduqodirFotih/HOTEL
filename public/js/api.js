@@ -77,6 +77,10 @@
     housekeepingQueue: () => request('GET', '/housekeeping/queue'),
     startCleaning: (roomNumber) => request('POST', `/housekeeping/start/${roomNumber}`),
     completeCleaning: (roomNumber) => request('POST', `/housekeeping/complete/${roomNumber}`),
+    confirmAvailable: (roomNumber) => request('POST', `/reception/confirm-available/${roomNumber}`),
+    markNeedsCleaning: (roomNumber) => request('POST', `/reception/mark-needs-cleaning/${roomNumber}`),
+    // Legacy alias
+    verifyClean: (roomNumber) => request('POST', `/reception/confirm-available/${roomNumber}`),
     addToCleaningQueue: (roomNumber) => request('POST', `/housekeeping/queue/${roomNumber}`),
 
     // Orders
@@ -91,6 +95,8 @@
     maintenance: () => request('GET', '/maintenance'),
     maintenanceQueue: () => request('GET', '/maintenance/queue'),
     reportMaintenance: (data) => request('POST', '/maintenance', data),
+    acknowledgeMaintenance: (id) => request('POST', `/maintenance/${id}/acknowledge`),
+    startMaintenance: (id) => request('POST', `/maintenance/${id}/start`),
     resolveMaintenance: (id, notes) => request('POST', `/maintenance/${id}/resolve`, { notes }),
 
     // Notifications

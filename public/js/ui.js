@@ -103,8 +103,16 @@
   // STATUS PILLS / TRANSLATIONS
   // ---------------------------------------------------------------------------
   const STATUS_LABELS = {
-    clean: 'Toza', dirty: 'Iflos', cleaning: 'Tozalanmoqda',
-    maintenance: 'Texnik xizmat', occupied: 'Band',
+    available:         'Bo\'sh',
+    occupied:          'Band',
+    cleaning_required: 'Tozalash kerak',
+    cleaning:          'Tozalanmoqda',
+    inspection:        'Tekshiruvda',
+    maintenance:       'Texnik xizmat',
+    // Eski nomlar (data.json eski bo'lsa)
+    clean:             'Bo\'sh',
+    dirty:             'Tozalash kerak',
+    cleaned:           'Tekshiruvda',
   };
   const ROOM_TYPE_LABELS = {
     single: 'Single', double: 'Double', suite: 'Suite', accessible: 'Imkoniyatli',
@@ -116,6 +124,12 @@
     received: 'Qabul qilindi', preparing: 'Tayyorlanmoqda',
     delivering: 'Yetkazilmoqda', delivered: 'Yetkazildi', cancelled: 'Bekor qilingan',
   };
+  const MAINT_STATUS_LABELS = {
+    open: 'Yangi',
+    acknowledged: 'Qabul qilindi',
+    in_progress: 'Bajarilmoqda',
+    resolved: 'Hal qilindi',
+  };
 
   function statusPill(status) {
     return `<span class="status-pill status-${status}">${STATUS_LABELS[status] || status}</span>`;
@@ -125,6 +139,13 @@
   }
   function orderStatusPill(status) {
     return `<span class="status-pill status-${status === 'delivered' ? 'clean' : status === 'cancelled' ? 'maintenance' : 'cleaning'}">${ORDER_STATUS_LABELS[status] || status}</span>`;
+  }
+  function maintStatusPill(status) {
+    const cls = status === 'resolved' ? 'status-clean'
+              : status === 'in_progress' ? 'status-cleaning'
+              : status === 'acknowledged' ? 'priority-high'
+              : 'priority-critical'; // open
+    return `<span class="status-pill ${cls}">${MAINT_STATUS_LABELS[status] || status}</span>`;
   }
 
   // ---------------------------------------------------------------------------
@@ -199,8 +220,8 @@
   window.HotelOS.UI = {
     toast, openModal, closeModal,
     formatUZS, formatDuration, formatDateTime, formatTime,
-    statusPill, priorityPill, orderStatusPill,
-    STATUS_LABELS, ROOM_TYPE_LABELS, URGENCY_LABELS, ORDER_STATUS_LABELS,
+    statusPill, priorityPill, orderStatusPill, maintStatusPill,
+    STATUS_LABELS, ROOM_TYPE_LABELS, URGENCY_LABELS, ORDER_STATUS_LABELS, MAINT_STATUS_LABELS,
     connectWS, escapeHtml,
   };
 
