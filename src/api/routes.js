@@ -240,6 +240,90 @@ router.post('/maintenance/:id/resolve', requireAuth, requirePermission('maintena
 });
 
 // ============================================================================
+// MANAGER — Eslatma yuborish (faqat ogohlantirish, ish bajarmaydi)
+// ============================================================================
+
+/**
+ * Bosh menejer tozalovchiga eslatma yuboradi: "vaqtida ish qiling".
+ * Bu xona statusini o'zgartirmaydi — faqat bildirishnoma yaratadi va
+ * tozalovchi rolida ishlayotgan barcha foydalanuvchilarga tarqatadi.
+ */
+router.post('/manager/remind/housekeeping/:roomNumber', requireAuth, requirePermission('manager.remind_housekeeping'), (req, res) => {
+  try {
+    const roomNumber = validateRoomNumber(req.params.roomNumber);
+    const room = store.getRoom(roomNumber);
+    if (!room) return res.status(404).json({ error: `${roomNumber}-xona topilmadi` });
+    const sender = req.session.displayName || req.session.username;
+    const reminderMsg = req.body?.message?.trim() || 'Iltimos, ushbu xonani vaqtida tozalang';
+
+    broker.publish('notification.created', {
+      type: 'manager_reminder',
+      severity: 'warning',
+      targetRole: 'housekeeping',
+      message: `🔔 ${sender}dan eslatma: ${roomNumber}-xona — ${reminderMsg}`,
+      roomNumber,
+      sender,
+    });
+
+    broker.publish('manager.reminder_sent', {
+      target: 'housekeeping',
+      roomNumber,
+      sender,
+      message: reminderMsg,
+      sentAt: Date.now(),
+    });
+
+    logger.info(`[MANAGER] ${sender} -> housekeeping eslatmasi (xona ${roomNumber})`);
+    res.json({ success: true, sent: { to: 'housekeeping', roomNumber, message: reminderMsg } });
+  } catch (err) { handleError(res, err); }
+});
+
+/**
+ * Bosh menejer texnikka eslatma yuboradi: "muammoni hal qil".
+ * Bu so'rovni qabul qilmaydi yoki bajarmaydi — faqat bildirishnoma.
+ */
+router.post('/manager/remind/maintenance/:id', requireAuth, requirePermission('manager.remind_maintenance'), (req, res) => {
+  const requestId = req.params.id;
+  const request = maintenance.getById(requestId);
+  if (!request) return res.status(404).json({ error: `So'rov ${requestId} topilmadi` });
+
+  const sender = req.session.displayName || req.session.username;
+  const reminderMsg = req.body?.message?.trim() || 'Iltimos, muammoni tezroq hal qiling';
+
+  broker.publish('notification.created', {
+    type: 'manager_reminder',
+    severity: 'warning',
+    targetRole: 'maintenance',
+    message: `🔔 ${sender}dan eslatma: ${request.roomNumber}-xona texnik so'rovi — ${reminderMsg}`,
+    roomNumber: request.roomNumber,
+    requestId,
+    sender,
+  });
+
+  broker.publish('manager.reminder_sent', {
+    target: 'maintenance',
+    requestId,
+    roomNumber: request.roomNumber,
+    sender,
+    message: reminderMsg,
+    sentAt: Date.now(),
+  });
+
+  logger.info(`[MANAGER] ${sender} -> maintenance eslatmasi (so'rov ${requestId})`);
+  res.json({ success: true, sent: { to: 'maintenance', requestId, message: reminderMsg } });
+});
+
+/** Manager statistika va tarixni ko'rish — fake data + jonli ma'lumotlar */
+router.get('/manager/history', requireAuth, requirePermission('history.view'), (req, res) => {
+  res.json({
+    bookings: store.getBookingHistory(),
+    maintenanceHistory: store.getMaintenanceHistory(),
+    cleaningHistory: store.getCleaningHistory(),
+    staffPerformance: store.getStaffPerformance(),
+  });
+});
+
+// ============================================================================
 // NOTIFICATIONS
 // ============================================================================
 

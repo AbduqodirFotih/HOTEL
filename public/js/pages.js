@@ -72,7 +72,7 @@
    * Bu funksiya dashboard renderlangandan keyin chaqiriladi.
    */
   function bindCardActions(container) {
-    // Maintenance: acknowledge / start / resolve
+    // Maintenance: acknowledge / start / resolve / remind
     $$('[data-maint-action]', container).forEach((btn) => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.maintId;
@@ -87,6 +87,19 @@
           } else if (action === 'resolve') {
             await API.resolveMaintenance(id, 'Hal qilindi');
             UI.toast('Hal qilindi ✓', { severity: 'success' });
+          } else if (action === 'remind') {
+            // Bosh menejer texnikka eslatma yuboradi (ish bajarmaydi)
+            const roomNumber = btn.dataset.room || '';
+            showReminderModal({
+              targetLabel: 'Texnik xodim',
+              contextLabel: roomNumber ? `${roomNumber}-xona so'rovi` : 'so\'rov',
+              placeholder: 'Iltimos, ushbu muammoni tezroq hal qiling',
+              onSend: async (msg) => {
+                await API.remindMaintenance(id, msg);
+                UI.toast('Eslatma texnikka yuborildi ✓', { severity: 'success' });
+              },
+            });
+            return; // dashboard reload chaqirilmaydi — kutyapmiz
           }
           dashboard(container);
         } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
@@ -218,15 +231,22 @@
               </div>
               ${cleaningNow.length === 0
                 ? `<div class="text-sm text-muted" style="padding:10px;border:1px dashed var(--border);border-radius:6px;text-align:center">Hozir hech kim tozalamayapti</div>`
-                : cleaningNow.map((r) => `
+                : cleaningNow.map((r) => {
+                    const elapsed = r.cleaningStartedAt ? Date.now() - r.cleaningStartedAt : 0;
+                    const slow = elapsed > 30 * 60000; // 30 daq.dan ortiq
+                    return `
                   <div style="padding:10px 12px;background:var(--bg-elevated);border-radius:6px;margin-bottom:6px;border-left:3px solid var(--status-cleaning-text)">
                     <div style="display:flex;justify-content:space-between;align-items:center">
                       <span class="font-semibold">Xona ${r.number}</span>
-                      <span class="text-sm text-muted">${r.cleaningStartedAt ? fmtDur(Date.now() - r.cleaningStartedAt) : '—'}</span>
+                      <span class="text-sm ${slow ? 'text-warning' : 'text-muted'}">${r.cleaningStartedAt ? fmtDur(elapsed) : '—'}</span>
                     </div>
-                    <div class="text-sm text-muted">${esc(r.cleanedBy || 'Tozalovchi')}</div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+                      <span class="text-sm text-muted">${esc(r.cleanedBy || 'Tozalovchi')}</span>
+                      ${can('manager.remind_housekeeping') ? `<button class="btn btn-warning btn-xs room-action" data-action="remind-housekeeping" data-room="${r.number}" style="padding:2px 8px;font-size:11px">🔔 Eslatma</button>` : ''}
+                    </div>
                   </div>
-                `).join('')}
+                `;
+                }).join('')}
             </div>
 
             <!-- Tekshirilmoqda -->
@@ -260,14 +280,19 @@
                 ? `<div class="text-sm text-muted" style="padding:10px;border:1px dashed var(--border);border-radius:6px;text-align:center">Hozir texnik ish bajarilmayapti</div>`
                 : activeMaintenance.map((r) => {
                     const since = r.acknowledgedAt || r.submittedAt;
+                    const elapsed = Date.now() - since;
+                    const slow = elapsed > 60 * 60000;
                     return `
                   <div style="padding:10px 12px;background:var(--bg-elevated);border-radius:6px;margin-bottom:6px;border-left:3px solid var(--danger)">
                     <div style="display:flex;justify-content:space-between;align-items:center">
                       <span class="font-semibold">Xona ${r.roomNumber}</span>
                       ${UI.maintStatusPill(r.status)}
                     </div>
-                    <div class="text-sm" style="margin-top:4px">${esc(r.assignedToName || '—')} · ${fmtDur(Date.now() - since)}</div>
-                    <div class="text-sm text-muted" style="margin-top:2px">${esc(r.description.slice(0,60))}${r.description.length>60?'…':''}</div>
+                    <div class="text-sm" style="margin-top:4px">${esc(r.assignedToName || '—')} · <span class="${slow ? 'text-warning' : 'text-muted'}">${fmtDur(elapsed)}</span></div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+                      <span class="text-sm text-muted">${esc(r.description.slice(0,60))}${r.description.length>60?'…':''}</span>
+                      ${can('manager.remind_maintenance') ? `<button class="btn btn-warning btn-xs" data-maint-action="remind" data-maint-id="${r.id}" data-room="${r.roomNumber}" style="padding:2px 8px;font-size:11px">🔔 Eslatma</button>` : ''}
+                    </div>
                   </div>
                 `;
                   }).join('')}
@@ -276,6 +301,9 @@
           </div>
         </div>
       </div>
+
+      <!-- TARIXIY MA'LUMOTLAR — faqat menejer ko'radi (history.view) -->
+      <div id="manager-history-container"></div>
 
       <div class="dashboard-grid">
         ${inspectionCard(rooms)}
@@ -287,6 +315,188 @@
         ${eventsCard(recentEvents)}
       </div>
     `;
+
+    // Tarixiy ma'lumotlarni alohida yuklab olamiz (15 buyurtma, 4 texnik so'rovi, xodim faoliyati)
+    if (can('history.view')) {
+      renderManagerHistory($('#manager-history-container', container));
+    }
+  }
+
+  /**
+   * Manager nazorat paneli uchun tarixiy ma'lumotlar:
+   *   - 15 ta o'tgan buyurtma (turli mehmonlar, xonalar, xizmatlar)
+   *   - 4 ta o'tgan texnik so'rov (texnik tarixi)
+   *   - Xodim faoliyati ko'rsatkichlari (vaqtida bajarish, davomiylik)
+   */
+  async function renderManagerHistory(target) {
+    if (!target) return;
+    target.innerHTML = `<div class="card"><div class="card-body"><div class="text-muted">Tarixiy ma'lumotlar yuklanmoqda...</div></div></div>`;
+    let hist;
+    try { hist = await API.managerHistory(); }
+    catch (err) { target.innerHTML = `<div class="card"><div class="card-body"><div class="text-danger">Tarix yuklanmadi: ${esc(err.message)}</div></div></div>`; return; }
+
+    const { bookings, maintenanceHistory, staffPerformance } = hist;
+    // Statistika hisoblash
+    const totalRevenue = bookings.reduce((s, b) => s + (b.totalRevenue || 0), 0);
+    const totalServiceRevenue = bookings.reduce((s, b) => s + (b.services || []).reduce((ss, sv) => ss + (sv.price || 0), 0), 0);
+    const popularServices = {};
+    bookings.forEach((b) => (b.services || []).forEach((sv) => {
+      popularServices[sv.name] = (popularServices[sv.name] || 0) + (sv.qty || 1);
+    }));
+    const topServices = Object.entries(popularServices)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    target.innerHTML = `
+      <div class="card" style="border-left:4px solid var(--info, #2563EB);margin-top:14px">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">📊</span> Mehmonxona Tarixi va Xodim Faoliyati</h3>
+          <span class="text-muted text-sm">${bookings.length} buyurtma · ${maintenanceHistory.length} texnik so'rov</span>
+        </div>
+        <div class="card-body">
+
+          <!-- KPI satr — tarixiy umumiy ko'rsatkichlar -->
+          <div class="kpi-grid" style="margin-bottom:14px">
+            ${kpiCard('Tarixiy daromad', fmtUZS(totalRevenue), `${bookings.length} mehmondan`, '💰', 'success')}
+            ${kpiCard('Qo\'shimcha xizmat', fmtUZS(totalServiceRevenue), 'Taom + ichimlik', '🍽', 'info')}
+            ${kpiCard('Tugatilgan ishlar', maintenanceHistory.length, 'Hammasi hal qilingan', '✓', 'primary')}
+            ${kpiCard('O\'rtacha javob', maintenanceHistory.length ? fmtDur(Math.round(maintenanceHistory.reduce((s, m) => s + (m.acknowledgedAt - m.reportedAt), 0) / maintenanceHistory.length)) : '—', 'Qabul qilishgacha', '⚡', 'warning')}
+          </div>
+
+          <div class="dashboard-grid">
+
+            <!-- O'tgan buyurtmalar -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title"><span class="card-title-icon">🧾</span> So'nggi 15 ta buyurtma</h3>
+              </div>
+              <div class="card-body" style="max-height:480px;overflow-y:auto">
+                ${bookings.slice().reverse().map((b) => {
+                  const checkInDate = new Date(b.checkInAt).toLocaleDateString('uz-UZ');
+                  const services = (b.services || []).map((s) => `${s.qty}× ${s.name}`).join(', ');
+                  const hasIssue = (b.relatedIssues || []).length > 0;
+                  return `
+                    <div class="order-row" style="padding:10px 14px">
+                      <div class="order-info">
+                        <div class="order-title">${esc(b.guestName)} ${hasIssue ? '<span title="Texnik muammo bo\'lgan" style="margin-left:4px">⚠️</span>' : ''}</div>
+                        <div class="order-items-summary">
+                          <b>Xona ${b.roomNumber}</b> (${UI.ROOM_TYPE_LABELS[b.roomType] || b.roomType}) · ${b.nights} kecha · ${checkInDate}
+                        </div>
+                        ${services ? `<div class="text-sm text-muted" style="margin-top:4px">🍽 ${esc(services)}</div>` : ''}
+                      </div>
+                      <div class="order-actions" style="flex-direction:column;align-items:flex-end">
+                        <span class="font-mono font-semibold">${fmtUZS(b.totalRevenue)}</span>
+                        <span class="text-sm text-muted">${b.paymentMethod === 'card' ? '💳' : '💵'}</span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Texnik so'rovlar tarixi -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title"><span class="card-title-icon">🔧</span> Hal qilingan texnik so'rovlar</h3>
+              </div>
+              <div class="card-body">
+                ${maintenanceHistory.slice().reverse().map((m) => {
+                  const reportedDate = new Date(m.reportedAt).toLocaleDateString('uz-UZ');
+                  const responseDur = fmtDur(m.acknowledgedAt - m.reportedAt);
+                  const totalDur = fmtDur(m.durationMs);
+                  return `
+                    <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                        <div style="flex:1">
+                          <div class="font-semibold">Xona ${m.roomNumber} — ${esc(m.category)}</div>
+                          <div class="text-sm text-muted">${esc(m.description)}</div>
+                        </div>
+                        ${UI.priorityPill(m.urgency)}
+                      </div>
+                      <div style="display:flex;gap:14px;margin-top:6px;font-size:12px;color:var(--text-muted)">
+                        <span>📅 ${reportedDate}</span>
+                        <span>⚡ Javob: <b>${responseDur}</b></span>
+                        <span>⏱ Bajarish: <b>${totalDur}</b></span>
+                      </div>
+                      <div style="margin-top:4px;font-size:12px">
+                        <b>${esc(m.resolvedBy)}</b>: ${esc(m.resolutionNotes)}
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+          </div>
+
+          <div class="dashboard-grid" style="margin-top:14px">
+
+            <!-- Tozalovchilar faoliyati -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title"><span class="card-title-icon">🧹</span> Tozalovchilar — 30 kunlik faoliyat</h3>
+              </div>
+              <div class="card-body">
+                ${(staffPerformance.housekeepers || []).map((h) => `
+                  <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <span class="font-semibold">${esc(h.name)}</span>
+                      <span class="${h.onTimePercent >= 90 ? 'text-success' : h.onTimePercent >= 75 ? 'text-warning' : 'text-danger'} font-semibold">${h.onTimePercent}% vaqtida</span>
+                    </div>
+                    <div style="display:flex;gap:14px;margin-top:6px;font-size:12px;color:var(--text-muted)">
+                      <span>📊 Jami tozalash: <b>${h.totalCleanings}</b></span>
+                      <span>⏱ O'rtacha: <b>${fmtDur(h.avgDurationMs)}</b></span>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- Texniklar faoliyati -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title"><span class="card-title-icon">🔧</span> Texniklar — tarixiy ko'rsatkichlar</h3>
+              </div>
+              <div class="card-body">
+                ${(staffPerformance.technicians || []).map((t) => `
+                  <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <span class="font-semibold">${esc(t.name)}</span>
+                      <span class="text-sm text-muted"><b>${t.totalResolved}</b> ta hal qilgan</span>
+                    </div>
+                    <div style="display:flex;gap:14px;margin-top:6px;font-size:12px;color:var(--text-muted)">
+                      <span>⚡ O'rtacha javob: <b>${fmtDur(t.avgResponseMs)}</b></span>
+                      <span>⏱ O'rtacha bajarish: <b>${fmtDur(t.avgResolutionMs)}</b></span>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- Top 5 mashhur xizmat -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title"><span class="card-title-icon">⭐</span> Mashhur 5 ta xizmat</h3>
+              </div>
+              <div class="card-body">
+                ${topServices.map(([name, count], i) => `
+                  <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+                    <span><b style="color:var(--text-muted);margin-right:8px">${i+1}.</b> ${esc(name)}</span>
+                    <span class="font-mono"><b>${count}</b> marta</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    `;
+
+    // Yangi yuklangan eslatma tugmalarini bog'laymiz
+    bindRoomActions(target, () => dashboard(target.parentElement));
+    bindCardActions(target);
   }
 
   // -- Qabul xodimi: xonalar, mehmonlar, buyurtmalar --------------------------
@@ -348,11 +558,8 @@
 
     // Tezkor amal tugmalari
     $('#qa-checkin', container)?.addEventListener('click', () => {
-      // Birinchi bo'sh xonani tanlab modal ochamiz, foydalanuvchi xonani o'zgartira oladi
-      const firstAvailable = availableRooms[0];
-      if (firstAvailable) {
-        showCheckInModal(firstAvailable.number, () => dashboard(container));
-      }
+      // Hech qaysi xona oldindan tanlanmaydi — foydalanuvchi modal'da tanlaydi
+      showCheckInModal(null, () => dashboard(container));
     });
 
     $('#qa-checkout', container)?.addEventListener('click', () => {
@@ -465,15 +672,57 @@
     const cleaningRooms = rooms.filter((r) => r.status === 'cleaning');
     const inspectionRooms = rooms.filter((r) => r.status === 'inspection');
     const cleanRooms = rooms.filter((r) => r.status === 'available');
-    const dueSoon = cleanRooms.filter((r) => r.lastCleanedAt && (Date.now() - r.lastCleanedAt) > 10 * 3600000).length;
+
+    // 12 soatdan oshib ketgan xonalar (har qanday statusda — band ham, bo'sh ham)
+    const TWELVE_HOURS = 12 * 3600000;
+    const NOW = Date.now();
+    const overdueRooms = rooms
+      .filter((r) => r.status !== 'cleaning' && r.status !== 'cleaning_required' && r.status !== 'inspection' && r.status !== 'maintenance')
+      .filter((r) => r.lastCleanedAt && (NOW - r.lastCleanedAt) > TWELVE_HOURS)
+      .sort((a, b) => (a.lastCleanedAt || 0) - (b.lastCleanedAt || 0));
+
+    const dueSoon = cleanRooms.filter((r) => r.lastCleanedAt && (NOW - r.lastCleanedAt) > 10 * 3600000).length;
 
     container.innerHTML = `
       <div class="kpi-grid">
         ${kpiCard('Tozalash kerak', dirtyRooms.length, 'Tezroq boshlang', '⚠', 'warning')}
         ${kpiCard('Tozalanmoqda', cleaningRooms.length, 'Hozir ishlanmoqda', '✦', 'info')}
         ${kpiCard('Tekshirilmoqda', inspectionRooms.length, 'Qabul tasdiqlashi kutilmoqda', '🔍', 'info')}
-        ${kpiCard('Yaqin orada', dueSoon, '10+ soat o\'tdi', '⏱', 'warning')}
+        ${kpiCard('12 soat o\'tdi', overdueRooms.length, 'Qayta tozalash kerak', '⏰', overdueRooms.length ? 'danger' : 'success')}
       </div>
+
+      <!-- 12 soatlik vazifalar — har bir xona uchun, band bo'lsa ham -->
+      ${overdueRooms.length > 0 ? `
+      <div class="card" style="border-left:4px solid var(--danger)">
+        <div class="card-header">
+          <h3 class="card-title"><span class="card-title-icon">⏰</span> 12-soatlik qayta tozalash vazifalari</h3>
+          <span class="text-muted text-sm">${overdueRooms.length} ta xona 12+ soatdan beri tozalanmagan</span>
+        </div>
+        <div class="card-body">
+          ${overdueRooms.map((r) => {
+            const elapsedHrs = Math.round((NOW - r.lastCleanedAt) / 3600000);
+            const isOccupied = r.status === 'occupied';
+            return `
+              <div class="order-row" style="${isOccupied ? 'background:linear-gradient(0deg,rgba(245,158,11,0.04),transparent)' : ''}">
+                <div class="order-info">
+                  <div class="order-title">Xona ${r.number} — ${UI.ROOM_TYPE_LABELS[r.type] || r.type}</div>
+                  <div class="order-items-summary">
+                    ${UI.statusPill(r.status)}
+                    <span style="margin-left:8px"><b>${elapsedHrs} soat</b> tozalanmagan</span>
+                    ${isOccupied ? '<span class="badge-warning" style="margin-left:8px">Mijoz ichida — kelishib oling</span>' : ''}
+                  </div>
+                </div>
+                <div class="order-actions">
+                  ${isOccupied
+                    ? `<span class="text-sm text-muted">Mijon bilan kelishib tozalang</span>`
+                    : `<button class="btn btn-primary btn-sm" data-quick-start="${r.number}">▶ Boshlash</button>`}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+      ` : ''}
 
       <div class="dashboard-grid">
 
@@ -711,6 +960,7 @@
     const canAck = can('maintenance.acknowledge');
     const canStart = can('maintenance.start');
     const canResolve = can('maintenance.resolve');
+    const canRemind = can('manager.remind_maintenance'); // bosh menejer
     return `
       <div class="card">
         <div class="card-header">
@@ -722,12 +972,17 @@
             ? `<div class="table-empty">Ochiq texnik xizmat so'rovi yo'q ✓</div>`
             : openMaintenance.slice(0, 6).map((r) => {
                 let action = '';
+                // Texnik xodim — bevosita ish bajaradi
                 if (r.status === 'open' && canAck) {
                   action = `<button class="btn btn-secondary btn-sm" data-maint-action="acknowledge" data-maint-id="${r.id}">Qabul qilish</button>`;
                 } else if (r.status === 'acknowledged' && canStart) {
-                  action = `<button class="btn btn-primary btn-sm" data-maint-action="start" data-maint-id="${r.id}">Boshlash</button>`;
+                  action = `<button class="btn btn-primary btn-sm" data-maint-action="start" data-maint-id="${r.id}">▶ Boshlash</button>`;
                 } else if (r.status === 'in_progress' && canResolve) {
                   action = `<button class="btn btn-success btn-sm" data-maint-action="resolve" data-maint-id="${r.id}">✓ Hal qilindi</button>`;
+                }
+                // Bosh menejer — ish bajarmaydi, faqat eslatma yuboradi
+                else if (canRemind && r.status !== 'resolved') {
+                  action = `<button class="btn btn-warning btn-sm" data-maint-action="remind" data-maint-id="${r.id}" data-room="${r.roomNumber}">🔔 Eslatma yuborish</button>`;
                 }
                 return `
                   <div class="order-row">
@@ -916,18 +1171,23 @@
    * Rol va xona statusiga qarab faqat amalga oshirilishi mumkin bo'lgan
    * o'tishlarni ko'rsatadi. Tugma yo'q bo'lsa kartochka chetida aksent
    * ko'rinmaydi (CSS :has() orqali).
+   *
+   * MUHIM: Bosh menejer ish bajarmaydi. Faqat eslatma yuboradi.
+   * Tozalovchi-tegishli tugmalar (start/complete cleaning) faqat
+   * tozalash xodimida ko'rinadi. Manager bu joylarda "Eslatma yuborish"
+   * tugmasini ko'radi.
    */
   function roomActions(room) {
     const buttons = [];
 
-    // BO'SH XONA — check-in (qabul / menejer)
+    // BO'SH XONA — check-in (faqat qabul xodimida bor)
     if (room.status === 'available' && can('reception.checkin')) {
       buttons.push(`<button class="btn btn-primary btn-sm room-action" data-action="check-in" data-room="${room.number}">
         <span aria-hidden="true">⊙</span> Check-in
       </button>`);
     }
 
-    // BAND XONA — check-out (qabul / menejer) + texnik hisobot (har kim)
+    // BAND XONA — check-out (qabul) + texnikka xabar (qabul yoki menejer ham qayd qila olishi mumkin, lekin maintenance.report endi managerda yo'q)
     if (room.status === 'occupied' && can('reception.checkout')) {
       buttons.push(`<button class="btn btn-secondary btn-sm room-action" data-action="checkout" data-room="${room.number}">
         <span aria-hidden="true">↩</span> Check-out
@@ -939,38 +1199,57 @@
       </button>`);
     }
 
-    // TOZALASH KERAK — tozalovchi boshlaydi, qabul navbatga qo'shadi
+    // TOZALASH KERAK — faqat tozalovchi boshlaydi (manager BOSHLAMAYDI)
     if (room.status === 'cleaning_required' && can('housekeeping.start')) {
       buttons.push(`<button class="btn btn-primary btn-sm room-action" data-action="start-cleaning" data-room="${room.number}">
         <span aria-hidden="true">▶</span> Tozalashni boshlash
       </button>`);
     }
+    // Qabul tozalashni navbatga qo'shadi (lekin tozalashni boshlamaydi)
     if (room.status === 'cleaning_required' && !can('housekeeping.start') && can('housekeeping.enqueue')) {
       buttons.push(`<button class="btn btn-ghost btn-sm room-action" data-action="enqueue-cleaning" data-room="${room.number}">
         <span aria-hidden="true">📤</span> Tozalovchiga yuborish
       </button>`);
     }
+    // BOSH MENEJER: tozalashni boshlamaydi — faqat eslatma yuboradi
+    if (room.status === 'cleaning_required' && can('manager.remind_housekeeping')) {
+      buttons.push(`<button class="btn btn-warning btn-sm room-action" data-action="remind-housekeeping" data-room="${room.number}">
+        <span aria-hidden="true">🔔</span> Tozalovchiga eslatma
+      </button>`);
+    }
 
-    // TOZALANMOQDA — tozalovchi yakunlaydi
+    // TOZALANMOQDA — faqat tozalovchi yakunlaydi (manager YAKUNLAMAYDI)
     if (room.status === 'cleaning' && can('housekeeping.complete')) {
       buttons.push(`<button class="btn btn-success btn-sm room-action" data-action="complete-cleaning" data-room="${room.number}">
         <span aria-hidden="true">✓</span> Tozalab bo'lindi
       </button>`);
     }
+    // BOSH MENEJER: kuzatib turadi, kerak bo'lsa eslatma yuboradi
+    if (room.status === 'cleaning' && can('manager.remind_housekeeping')) {
+      buttons.push(`<button class="btn btn-warning btn-sm room-action" data-action="remind-housekeeping" data-room="${room.number}">
+        <span aria-hidden="true">🔔</span> Tozalovchiga eslatma
+      </button>`);
+    }
 
-    // TEKSHIRUVDA — qabul tasdiqlaydi
+    // TEKSHIRUVDA — qabul tasdiqlaydi (manager TASDIQLAMAYDI)
     if (room.status === 'inspection' && can('reception.confirm_available')) {
       buttons.push(`<button class="btn btn-success btn-sm room-action" data-action="verify-clean" data-room="${room.number}">
         <span aria-hidden="true">✓</span> Tasdiqlash — Bo'sh
       </button>`);
     }
 
-    // Bo'sh xonani qayta tozalashga yuborish (menejer/qabul) — 12 soatdan oshgan
-    if (room.status === 'available' && can('housekeeping.enqueue') && room.lastCleanedAt
+    // Bo'sh xonani qayta tozalashga yuborish (qabul/manager — eslatma sifatida)
+    if (room.status === 'available' && room.lastCleanedAt
         && (Date.now() - room.lastCleanedAt) > 12 * 3600000) {
-      buttons.push(`<button class="btn btn-ghost btn-sm room-action" data-action="enqueue-cleaning" data-room="${room.number}">
-        <span aria-hidden="true">↻</span> Qayta tozalash
-      </button>`);
+      if (can('housekeeping.enqueue')) {
+        buttons.push(`<button class="btn btn-ghost btn-sm room-action" data-action="enqueue-cleaning" data-room="${room.number}">
+          <span aria-hidden="true">↻</span> Qayta tozalashga yuborish
+        </button>`);
+      } else if (can('manager.remind_housekeeping')) {
+        buttons.push(`<button class="btn btn-ghost btn-sm room-action" data-action="remind-housekeeping" data-room="${room.number}">
+          <span aria-hidden="true">🔔</span> Eslatma yuborish
+        </button>`);
+      }
     }
 
     if (buttons.length === 0) return '';
@@ -1013,6 +1292,18 @@
             } else {
               UI.toast(`Check-out: jami ${fmtUZS(res.bill.total)}`, { severity: 'success' });
             }
+          } else if (action === 'remind-housekeeping') {
+            // Bosh menejer tozalovchiga eslatma yuboradi (ish bajarmaydi)
+            showReminderModal({
+              targetLabel: 'Tozalovchi',
+              contextLabel: `${roomNumber}-xona`,
+              placeholder: 'Iltimos, ushbu xonani vaqtida tozalang',
+              onSend: async (msg) => {
+                await API.remindHousekeeping(roomNumber, msg);
+                UI.toast(`Eslatma tozalovchiga yuborildi (xona ${roomNumber}) ✓`, { severity: 'success' });
+              },
+            });
+            return;
           }
           if (typeof onAfterAction === 'function') onAfterAction();
         } catch (err) {
@@ -1024,25 +1315,65 @@
 
   /**
    * Tezkor check-in modal — xona kartochkasidan to'g'ridan-to'g'ri.
-   * Faqat mehmon ismi va kechalar sonini so'raydi (xona allaqachon tanlangan).
+  /**
+   * Check-in modal — mehmon ma'lumotlari va xona tanlash.
+   * @param {number|null} preselectedRoom — Agar mavjud bo'lsa, shu xona oldindan tanlangan.
+   *                                          null bo'lsa, foydalanuvchi bo'sh xonalardan tanlaydi.
    */
-  function showCheckInModal(roomNumber, onSuccess) {
+  function showCheckInModal(preselectedRoom, onSuccess) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
+
+    // Yuklash holatini ko'rsatib qo'yamiz, xonalar yuklab olinguncha
     modal.innerHTML = `
-      <div class="modal-content" style="max-width:440px">
+      <div class="modal-content" style="max-width:520px">
         <div class="modal-header">
-          <h3 class="modal-title">Xona ${roomNumber} — Check-in</h3>
+          <h3 class="modal-title">Yangi Check-in</h3>
+          <button class="btn-icon modal-close" type="button" aria-label="Yopish">✕</button>
+        </div>
+        <div class="modal-body"><div class="text-muted">Bo'sh xonalar yuklanmoqda...</div></div>
+      </div>`;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelectorAll('.modal-close').forEach((b) => b.addEventListener('click', close));
+
+    // Bo'sh xonalarni yuklab olamiz
+    API.inventory().then(({ rooms }) => {
+      const availableRooms = rooms.filter((r) => r.status === 'available');
+      if (availableRooms.length === 0) {
+        modal.querySelector('.modal-body').innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">🚫</div>
+            <div class="empty-title">Bo'sh xona yo'q</div>
+            <div class="empty-hint">Hozir barcha xonalar band yoki tayyor emas. Iltimos, biroz keyin urinib ko'ring.</div>
+          </div>`;
+        return;
+      }
+
+      // Xona turlari bo'yicha guruhlash (UI uchun)
+      const byType = {};
+      availableRooms.forEach((r) => {
+        (byType[r.type] = byType[r.type] || []).push(r);
+      });
+
+      // Default tanlov: oldin tanlangan xona yoki birinchi bo'sh xona
+      const initialRoom = preselectedRoom && availableRooms.find((r) => r.number === preselectedRoom)
+        ? preselectedRoom
+        : availableRooms[0].number;
+
+      modal.querySelector('.modal-content').innerHTML = `
+        <div class="modal-header">
+          <h3 class="modal-title">Yangi Check-in</h3>
           <button class="btn-icon modal-close" type="button" aria-label="Yopish">✕</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
             <label class="form-label">Mehmon ismi *</label>
-            <input class="form-input" id="mci-name" placeholder="Masalan, Aliyev Aziz" required autofocus>
+            <input class="form-input" id="mci-name" placeholder="Masalan, Karimov Aziz" required autofocus>
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">Telefon</label>
+              <label class="form-label">Telefon raqami</label>
               <input class="form-input" id="mci-phone" placeholder="+998 90 123-45-67">
             </div>
             <div class="form-group">
@@ -1050,42 +1381,138 @@
               <input class="form-input" id="mci-nights" type="number" min="1" max="30" value="1" required>
             </div>
           </div>
-          <div class="form-hint">Bu xona uchun mehmon ma'lumotlarini kiriting. Tasdiqlanganidan keyin xona band qilinadi va to'lov boshlanadi.</div>
+          <div class="form-group">
+            <label class="form-label">Xona tanlang *  <span class="text-muted text-sm">(${availableRooms.length} ta bo'sh)</span></label>
+            <div class="room-picker-grid">
+              ${availableRooms.map((r) => `
+                <label class="room-picker-card${r.number === initialRoom ? ' selected' : ''}" data-room-pick="${r.number}">
+                  <input type="radio" name="mci-room" value="${r.number}" ${r.number === initialRoom ? 'checked' : ''} style="display:none">
+                  <div class="rpc-number">${r.number}</div>
+                  <div class="rpc-type">${UI.ROOM_TYPE_LABELS[r.type] || r.type}</div>
+                  <div class="rpc-floor">${r.floor}-qavat</div>
+                  <div class="rpc-price">${fmtUZS(r.nightlyRate)}/tun</div>
+                </label>
+              `).join('')}
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-ghost modal-close" type="button">Bekor qilish</button>
           <button class="btn btn-primary" id="mci-submit" type="button">✓ Check-in qilish</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
+        </div>`;
 
+      // Xona tanlash UI logikasi
+      modal.querySelectorAll('.modal-close').forEach((b) => b.addEventListener('click', close));
+      $$('.room-picker-card', modal).forEach((card) => {
+        card.addEventListener('click', () => {
+          $$('.room-picker-card', modal).forEach((c) => c.classList.remove('selected'));
+          card.classList.add('selected');
+          $('input', card).checked = true;
+          // Total yangilash
+          const room = availableRooms.find((r) => r.number === parseInt(card.dataset.roomPick, 10));
+          const nights = parseInt($('#mci-nights', modal).value || '1', 10);
+          updateTotal(room, nights);
+        });
+      });
+
+      function updateTotal(room, nights) {
+        const total = (room?.nightlyRate || 0) * nights;
+        const target = $('#mci-total', modal);
+        if (target) target.textContent = fmtUZS(total);
+      }
+      $('#mci-nights', modal).addEventListener('input', () => {
+        const selected = modal.querySelector('.room-picker-card.selected');
+        if (!selected) return;
+        const room = availableRooms.find((r) => r.number === parseInt(selected.dataset.roomPick, 10));
+        updateTotal(room, parseInt($('#mci-nights', modal).value || '1', 10));
+      });
+
+      $('#mci-submit', modal).addEventListener('click', async () => {
+        const name = $('#mci-name', modal).value.trim();
+        const phone = $('#mci-phone', modal).value.trim();
+        const nights = parseInt($('#mci-nights', modal).value, 10);
+        const roomNumber = parseInt(modal.querySelector('input[name="mci-room"]:checked')?.value || '0', 10);
+
+        if (!name || name.length < 2) {
+          UI.toast('Mehmon ismi kiritilishi shart (kamida 2 belgi)', { severity: 'warning' });
+          $('#mci-name', modal).focus();
+          return;
+        }
+        if (!nights || nights < 1) {
+          UI.toast('Kechalar soni 1 dan kichik bo\'lmasligi kerak', { severity: 'warning' });
+          return;
+        }
+        if (!roomNumber) {
+          UI.toast('Xona tanlanmagan', { severity: 'warning' });
+          return;
+        }
+        try {
+          await API.checkIn({
+            guestName: name,
+            phone: phone || undefined,
+            nights,
+            roomNumber,
+            proximityPreference: 'none',
+          });
+          UI.toast(`Xona ${roomNumber} — ${name} uchun band qilindi ✓`, { severity: 'success' });
+          close();
+          if (typeof onSuccess === 'function') onSuccess();
+        } catch (err) {
+          UI.toast(err.message, { severity: 'danger' });
+        }
+      });
+    }).catch((err) => {
+      modal.querySelector('.modal-body').innerHTML = `<div class="text-danger">Yuklab bo'lmadi: ${err.message}</div>`;
+    });
+  }
+
+  /**
+   * Eslatma yuborish modal — bosh menejer foydalanuvchining ish bajarmasdan,
+   * tegishli xodimga yumshoq eslatma yuborishi uchun.
+   */
+  function showReminderModal({ targetLabel, contextLabel, placeholder, onSend }) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">🔔 ${targetLabel}ga eslatma — ${contextLabel}</h3>
+          <button class="btn-icon modal-close" type="button" aria-label="Yopish">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Eslatma xabari</label>
+            <textarea class="form-input" id="rmd-msg" rows="3" placeholder="${esc(placeholder)}"></textarea>
+            <div class="form-hint">Bo'sh qoldirsangiz standart xabar yuboriladi. Bu faqat bildirishnoma — ish o'zi bajarilmaydi.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tezkor variantlar</label>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <button class="btn btn-ghost btn-sm" type="button" data-quick-msg="Iltimos, ushbu ishni vaqtida bajaring">⏰ Vaqtida bajaring</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-quick-msg="Bu shoshilinch — birinchi navbatda hal qiling">⚠ Shoshilinch</button>
+              <button class="btn btn-ghost btn-sm" type="button" data-quick-msg="Mijozdan shikoyat keldi, tezroq harakat qiling">👤 Mijoz shikoyati</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" type="button">Bekor qilish</button>
+          <button class="btn btn-warning" id="rmd-send" type="button">📨 Eslatma yuborish</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
     const close = () => modal.remove();
     modal.querySelectorAll('.modal-close').forEach((b) => b.addEventListener('click', close));
-
-    $('#mci-submit', modal).addEventListener('click', async () => {
-      const name = $('#mci-name', modal).value.trim();
-      const phone = $('#mci-phone', modal).value.trim();
-      const nights = parseInt($('#mci-nights', modal).value, 10);
-      if (!name || name.length < 2) {
-        UI.toast('Mehmon ismi kiritilishi shart', { severity: 'warning' });
-        return;
-      }
-      if (!nights || nights < 1) {
-        UI.toast('Kechalar soni 1 dan kichik bo\'lmasligi kerak', { severity: 'warning' });
-        return;
-      }
+    // Tezkor xabar variantlari
+    $$('[data-quick-msg]', modal).forEach((b) => {
+      b.addEventListener('click', () => {
+        $('#rmd-msg', modal).value = b.dataset.quickMsg;
+      });
+    });
+    $('#rmd-send', modal).addEventListener('click', async () => {
+      const msg = $('#rmd-msg', modal).value.trim();
       try {
-        await API.checkIn({
-          guestName: name,
-          phone: phone || undefined,
-          nights,
-          roomNumber, // aniq xonani so'raymiz
-          proximityPreference: 'none',
-        });
-        UI.toast(`Xona ${roomNumber} — ${name} uchun band qilindi ✓`, { severity: 'success' });
+        await onSend(msg || undefined);
         close();
-        if (typeof onSuccess === 'function') onSuccess();
       } catch (err) {
         UI.toast(err.message, { severity: 'danger' });
       }

@@ -55,22 +55,28 @@ const POLICIES = {
   manager: {
     role: 'manager',
     displayName: 'Bosh Menejer',
-    description: 'To\'liq tizim boshqaruvi — barcha bo\'limlar va sozlamalarga kirish',
+    description: 'To\'liq nazorat — hamma narsani ko\'radi, lekin xodimlar ishini bajarmaydi. Faqat eslatma yuboradi va statistikani kuzatadi.',
     canSeeFinancials: true,
     canSeeStaffNames: true,
     permissions: new Set([
-      'reception.checkin', 'reception.checkout', 'reception.inventory',
-      'reception.confirm_available', 'reception.mark_needs_cleaning',
-      'housekeeping.queue.view', 'housekeeping.start', 'housekeeping.complete', 'housekeeping.enqueue', 'housekeeping.verify',
-      'orders.view', 'orders.create', 'orders.advance', 'orders.cancel', 'orders.menu',
-      'maintenance.view', 'maintenance.report', 'maintenance.acknowledge', 'maintenance.start', 'maintenance.resolve',
-      'rooms.force_maintenance', 'rooms.clear_maintenance',
+      // Mehmonlar nazorati (lekin bevosita check-in/out qilmaydi)
+      'reception.inventory',
+      // Xona/buyurtma/texnik so'rov KO'RISH (lekin BAJARMASLIK)
+      'housekeeping.queue.view',
+      'orders.view', 'orders.menu',
+      'maintenance.view',
+      // ENG MUHIM: faqat eslatma yuborish — boshqalar ishini bajarmaydi
+      'manager.remind_housekeeping',  // tozalovchiga eslatma
+      'manager.remind_maintenance',   // texnikka eslatma
+      'manager.force_maintenance',    // favqulodda holat: xonani texnik xizmatga majburlash
+      // Sozlamalar va monitoring
       'notifications.view', 'notifications.modify',
       'settings.view', 'settings.update', 'settings.reset',
       'tests.run',
       'events.view', 'broker.topics',
       'dashboard.view',
       'stats.view',
+      'history.view',  // tarixiy ma'lumotlar va xodim faoliyati
     ]),
     pages: ['dashboard', 'rooms', 'reception', 'housekeeping', 'orders', 'maintenance', 'tests', 'events', 'architecture', 'settings'],
     landingPage: 'dashboard',
@@ -78,14 +84,16 @@ const POLICIES = {
   reception: {
     role: 'reception',
     displayName: 'Qabul Xodimi',
-    description: 'Mehmonlarni qabul qilish, hisob-kitob, buyurtmalar va texnik muammolarni qayd etish',
+    description: 'Mehmonlar bilan ishlash: check-in/out, xona xizmati, tozalash buyrug\'i, texnik muammo qayd qilish',
     canSeeFinancials: true,
     canSeeStaffNames: true,
     permissions: new Set([
       'reception.checkin', 'reception.checkout', 'reception.inventory',
       'reception.confirm_available', 'reception.mark_needs_cleaning',
-      'housekeeping.queue.view', 'housekeeping.enqueue', 'housekeeping.verify',
+      // Tozalash navbatini boshqarish (lekin o'zi tozalamaydi)
+      'housekeeping.queue.view', 'housekeeping.enqueue',
       'orders.view', 'orders.create', 'orders.advance', 'orders.cancel', 'orders.menu',
+      // Texnik muammolarni qabul xodimi qayd qiladi
       'maintenance.view', 'maintenance.report',
       'notifications.view', 'notifications.modify',
       'settings.view',
@@ -98,11 +106,12 @@ const POLICIES = {
   housekeeping: {
     role: 'housekeeping',
     displayName: 'Tozalash Xodimi',
-    description: 'Faqat tozalash navbati va xona holatlarini boshqarish — narxlarsiz',
+    description: 'Tozalash navbati va xona holatlarini boshqarish. Har 12 soatda barcha xonalarni qayta tozalash.',
     canSeeFinancials: false,
     canSeeStaffNames: false,
     permissions: new Set([
       'reception.inventory',
+      // Faqat tozalash xodimi tozalashni boshlay/yakunlay oladi
       'housekeeping.queue.view', 'housekeeping.start', 'housekeeping.complete', 'housekeeping.enqueue',
       'notifications.view', 'notifications.modify',
       'settings.view',
@@ -115,12 +124,14 @@ const POLICIES = {
   maintenance: {
     role: 'maintenance',
     displayName: 'Texnik Xodim',
-    description: 'Faqat texnik xizmat so\'rovlari — qabul qilish, ishlash, hal qilish',
+    description: 'Faqat qabul xodimi qayd qilgan ishlarni ijro etadi. O\'zi yangi so\'rov yarata olmaydi.',
     canSeeFinancials: false,
     canSeeStaffNames: true,
     permissions: new Set([
       'reception.inventory',
-      'maintenance.view', 'maintenance.report', 'maintenance.acknowledge', 'maintenance.start', 'maintenance.resolve',
+      // MUHIM: maintenance.report YO'Q — texnik o'ziga ish yarata olmaydi
+      // Faqat keladigan ishlarni qabul qilib, bajaradi
+      'maintenance.view', 'maintenance.acknowledge', 'maintenance.start', 'maintenance.resolve',
       'notifications.view', 'notifications.modify',
       'settings.view',
       'events.view',

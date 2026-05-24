@@ -99,6 +99,9 @@ const orders = [];
 const maintenanceRequests = [];
 const notifications = [];
 
+// Tarixiy ma'lumotlar (boshliq nazorat paneli uchun)
+const historical = require('./historicalSeed');
+
 module.exports = {
   rooms,
   menu,
@@ -108,4 +111,9 @@ module.exports = {
   orders,
   maintenanceRequests,
   notifications,
+  // Boshliq tarixiy ma'lumotlari
+  bookingHistory: historical.bookingHistory,
+  maintenanceHistory: historical.maintenanceHistory,
+  cleaningHistory: historical.cleaningHistory,
+  staffPerformance: historical.staffPerformance,
 };

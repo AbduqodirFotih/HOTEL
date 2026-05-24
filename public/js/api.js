@@ -99,6 +99,11 @@
     startMaintenance: (id) => request('POST', `/maintenance/${id}/start`),
     resolveMaintenance: (id, notes) => request('POST', `/maintenance/${id}/resolve`, { notes }),
 
+    // Manager (bosh menejer) — faqat eslatma, ish bajarmaydi
+    remindHousekeeping: (roomNumber, message) => request('POST', `/manager/remind/housekeeping/${roomNumber}`, { message }),
+    remindMaintenance: (requestId, message) => request('POST', `/manager/remind/maintenance/${requestId}`, { message }),
+    managerHistory: () => request('GET', '/manager/history'),
+
     // Notifications
     notifications: (limit) => request('GET', `/notifications${limit ? `?limit=${limit}` : ''}`),
     markRead: (id) => request('POST', `/notifications/${id}/read`),

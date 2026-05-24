@@ -191,6 +191,11 @@ class MaintenanceService {
   getAll() {
     return store.getMaintenance();
   }
+
+  /** ID bo'yicha bitta so'rov */
+  getById(id) {
+    return store.getMaintenance().find((r) => r.id === id) || null;
+  }
 }
 
 module.exports = new MaintenanceService();

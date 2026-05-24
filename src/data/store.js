@@ -80,6 +80,11 @@ class Store {
       orders: JSON.parse(JSON.stringify(seed.orders)),
       maintenanceRequests: JSON.parse(JSON.stringify(seed.maintenanceRequests)),
       notifications: JSON.parse(JSON.stringify(seed.notifications)),
+      // Tarixiy ma'lumotlar (fake data — boshliq nazorat paneli uchun)
+      bookingHistory: JSON.parse(JSON.stringify(seed.bookingHistory || [])),
+      maintenanceHistory: JSON.parse(JSON.stringify(seed.maintenanceHistory || [])),
+      cleaningHistory: JSON.parse(JSON.stringify(seed.cleaningHistory || [])),
+      staffPerformance: JSON.parse(JSON.stringify(seed.staffPerformance || {})),
       settings: {
         cleaningThresholdHours: 12, // har 12 soatda tozalash kerak
         autoNotifyHousekeeping: true,
@@ -108,6 +113,7 @@ class Store {
     const defaults = {
       rooms: [], menu: [], technicians: [], housekeepers: [],
       guests: [], orders: [], maintenanceRequests: [], notifications: [],
+      bookingHistory: [], maintenanceHistory: [], cleaningHistory: [], staffPerformance: {},
       settings: {
         cleaningThresholdHours: 12,
         autoNotifyHousekeeping: true,
@@ -241,6 +247,12 @@ class Store {
       this.scheduleSave();
     }
   }
+
+  // ---- Tarixiy ma'lumotlar (boshliq nazorat paneli uchun) ----
+  getBookingHistory() { return this.state.bookingHistory || []; }
+  getMaintenanceHistory() { return this.state.maintenanceHistory || []; }
+  getCleaningHistory() { return this.state.cleaningHistory || []; }
+  getStaffPerformance() { return this.state.staffPerformance || {}; }
 }
 
 module.exports = new Store();

@@ -78,22 +78,36 @@ class NotificationService {
     let triggered = 0;
 
     for (const room of rooms) {
-      // Faqat band bo'lmagan va hozir tozalanmayotgan xonalar
-      if (room.status === 'occupied' || room.status === 'cleaning' || room.status === 'maintenance') {
+      // Hozir tozalanmayotgan, navbatda turmagan va texnik xizmatda bo'lmagan xonalar
+      if (room.status === 'cleaning' || room.status === 'maintenance' || room.status === 'cleaning_required' || room.status === 'inspection') {
         continue;
       }
       // Oxirgi tozalanish vaqtidan beri o'tgan vaqt
       const elapsed = now - (room.lastCleanedAt || 0);
       if (elapsed < thresholdMs) continue;
 
-      // Allaqachon iflos bo'lsa va navbatda bo'lsa, takror xabar yubormaymiz
-      if (room.status === 'dirty' && room.cleaningReminderSentAt && (now - room.cleaningReminderSentAt) < thresholdMs) {
+      // Bildirishnoma takrorlanmasligi uchun
+      if (room.cleaningReminderSentAt && (now - room.cleaningReminderSentAt) < thresholdMs) {
+        continue;
+      }
+      store.updateRoom(room.number, { cleaningReminderSentAt: now });
+
+      // BAND xonalar uchun: faqat eslatma yuboramiz — mehmon ichida bo'lganda
+      // statusni o'zgartirib bo'lmaydi. Tozalovchi mehmon bilan kelishadi.
+      if (room.status === 'occupied') {
+        broker.publish('notification.created', {
+          type: 'occupied_room_cleaning_due',
+          severity: 'warning',
+          targetRole: 'housekeeping',
+          message: `🛎 ${room.number}-xona (BAND) ${Math.round(elapsed / ONE_HOUR)} soatdan beri tozalanmagan. Mehmon bilan kelishib tozalang.`,
+          roomNumber: room.number,
+        });
+        triggered++;
         continue;
       }
 
-      // Sodir bo'ldi: 12 soat o'tdi, tozalash kerakligi haqida xabar
-      store.updateRoom(room.number, { cleaningReminderSentAt: now });
-
+      // BO'SH xonalar uchun: yangi mehmon kelishidan oldin tozalash kerak
+      // (statusni cleaning_required ga olib o'tamiz)
       broker.publish('room.cleaning_required', {
         roomNumber: room.number,
         elapsedHours: Math.round(elapsed / ONE_HOUR),
@@ -103,7 +117,8 @@ class NotificationService {
       broker.publish('notification.created', {
         type: 'cleaning_reminder',
         severity: 'warning',
-        message: `${room.number}-xona ${Math.round(elapsed / ONE_HOUR)} soatdan beri tozalanmagan. Tozalash kerak.`,
+        targetRole: 'housekeeping',
+        message: `🧹 ${room.number}-xona ${Math.round(elapsed / ONE_HOUR)} soatdan beri tozalanmagan. Yangi mehmonlardan oldin tozalash kerak.`,
         roomNumber: room.number,
       });
       triggered++;
