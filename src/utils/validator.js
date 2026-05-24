@@ -67,7 +67,6 @@ function requireEnum(value, allowed, field) {
 
 function validateCheckIn(body) {
   const guestName = requireString(body.guestName, 'Mehmon ismi', { min: 2, max: 80 });
-  const roomType = requireEnum(body.roomType, ROOM_TYPES, 'Xona turi');
   const nights = requireInt(body.nights, 'Tunlar soni', { min: 1, max: 90 });
   const floorPreference = body.floorPreference != null
     ? requireInt(body.floorPreference, 'Qavat afzalligi', { min: 1, max: 2 })
@@ -75,7 +74,20 @@ function validateCheckIn(body) {
   const proximityPreference = body.proximityPreference
     ? requireEnum(body.proximityPreference, PROXIMITY_PREF, 'Yaqinlik afzalligi')
     : 'none';
-  return { guestName, roomType, nights, floorPreference, proximityPreference };
+
+  // roomNumber yoki roomType — kamida bittasi bo'lishi kerak
+  let roomNumber = null;
+  let roomType = null;
+  if (body.roomNumber != null) {
+    roomNumber = validateRoomNumber(body.roomNumber, 'Xona raqami');
+    // Aniq xona berilganda turini majburiy emas, lekin kelsa tekshiramiz
+    if (body.roomType) roomType = requireEnum(body.roomType, ROOM_TYPES, 'Xona turi');
+  } else {
+    roomType = requireEnum(body.roomType, ROOM_TYPES, 'Xona turi');
+  }
+  const phone = body.phone ? requireString(body.phone, 'Telefon', { min: 4, max: 40 }) : null;
+
+  return { guestName, roomType, roomNumber, nights, floorPreference, proximityPreference, phone };
 }
 
 function validateRoomNumber(roomNumber, field = 'Xona raqami') {

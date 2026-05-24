@@ -18,7 +18,23 @@
 'use strict';
 
 function assignRoom(rooms, criteria) {
-  const { roomType, floorPreference = null, proximityPreference = 'none' } = criteria;
+  const { roomType, floorPreference = null, proximityPreference = 'none', roomNumber = null } = criteria;
+
+  // 0-bosqich: Agar aniq xona raqami ko'rsatilgan bo'lsa (kartochkadan check-in)
+  // — uni shu yerda hal qilamiz, algoritmni o'tkazib yuboramiz
+  if (roomNumber != null) {
+    const explicit = rooms.find((r) => r.number === roomNumber);
+    if (!explicit) {
+      return { room: null, reason: `${roomNumber}-xona topilmadi` };
+    }
+    if (explicit.status !== 'available') {
+      return {
+        room: null,
+        reason: `${roomNumber}-xona hozir bo'sh emas (holati: ${explicit.status})`,
+      };
+    }
+    return { room: explicit, reason: `Operator ${roomNumber}-xonani aniq tanladi` };
+  }
 
   // 1-bosqich: Xona turi va holati bo'yicha qat'iy filtr
   // Faqat 'available' (bo'sh va tayyor) xonalar nomzod bo'la oladi

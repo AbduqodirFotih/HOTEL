@@ -1839,3 +1839,135 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .status-available         { background: var(--status-clean-bg);       color: var(--status-clean-text); }
 .status-cleaning_required { background: var(--status-dirty-bg);       color: var(--status-dirty-text); }
 .status-inspection        { background: #FEF3C7;                       color: #92400E; }
+
+/* ===========================================================================
+   MODAL DIALOGS — premium overlay with backdrop blur
+   =========================================================================== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: modalFadeIn 0.18s ease-out;
+}
+@keyframes modalFadeIn { from { opacity: 0 } to { opacity: 1 } }
+.modal-content {
+  background: var(--bg-card);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.25);
+  width: 92%;
+  max-width: 540px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  animation: modalScaleIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes modalScaleIn {
+  from { transform: translateY(8px) scale(0.97); opacity: 0 }
+  to { transform: none; opacity: 1 }
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+.modal-body {
+  padding: 18px 22px;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border);
+}
+.btn-icon {
+  background: transparent;
+  border: 0;
+  font-size: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+.btn-icon:hover { background: var(--bg-subtle); color: var(--text-primary); }
+
+/* Category picker (used in maintenance report modal) */
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+.category-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: var(--bg-card);
+  user-select: none;
+}
+.category-card:hover {
+  border-color: var(--primary);
+  background: var(--bg-subtle);
+}
+.category-card.selected {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.06), rgba(59, 130, 246, 0.12));
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.10);
+}
+.category-card .cat-icon { font-size: 22px; line-height: 1; }
+.category-card .cat-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); text-align: center; line-height: 1.3; }
+.category-card.selected .cat-label { color: var(--text-primary); }
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* Quick action panel — used for prominent CTA section on reception/manager dashboards */
+.quick-action-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  padding: 14px;
+  background: linear-gradient(135deg, #FAFBFC, #F1F5F9);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.quick-action-panel .btn {
+  justify-content: flex-start;
+  text-align: left;
+  padding: 14px 16px;
+  font-weight: 500;
+}
+.quick-action-panel .btn .icon {
+  font-size: 22px;
+  margin-right: 10px;
+  display: inline-block;
+  width: 32px;
+  text-align: center;
+}

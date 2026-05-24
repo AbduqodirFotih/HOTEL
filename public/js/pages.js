@@ -292,6 +292,10 @@
   // -- Qabul xodimi: xonalar, mehmonlar, buyurtmalar --------------------------
   function renderReceptionDashboard(container, data) {
     const { rooms, summary, activeOrders, openMaintenance, guests } = data;
+
+    const availableRooms = rooms.filter((r) => r.status === 'available');
+    const occupiedRooms = rooms.filter((r) => r.status === 'occupied');
+
     container.innerHTML = `
       <div class="kpi-grid">
         ${kpiCard('Jami xonalar', summary.total, 'Inventar', '🏢', 'primary')}
@@ -299,6 +303,38 @@
         ${kpiCard('Band', summary.occupied || 0, 'Joriy mehmonlar', '👤', 'primary')}
         ${kpiCard('Tekshirish kerak', summary.inspection || 0, 'Tasdiqlashingiz kutilmoqda', '🔍', 'warning')}
         ${kpiCard('Faol buyurtmalar', activeOrders.length, 'Xona xizmati', '◇', 'info')}
+      </div>
+
+      <!-- TEZKOR AMALLAR — qabul xodimi eng ko'p ishlatadi -->
+      <div class="quick-action-panel">
+        <button class="btn btn-primary" id="qa-checkin" ${availableRooms.length === 0 ? 'disabled' : ''}>
+          <span class="icon">⊙</span>
+          <span>
+            <div>Yangi Check-in</div>
+            <div style="font-size:11px;opacity:.8;font-weight:400">${availableRooms.length} bo'sh xona mavjud</div>
+          </span>
+        </button>
+        <button class="btn btn-secondary" id="qa-checkout" ${occupiedRooms.length === 0 ? 'disabled' : ''}>
+          <span class="icon">↩</span>
+          <span>
+            <div>Check-out</div>
+            <div style="font-size:11px;opacity:.8;font-weight:400">${occupiedRooms.length} band xona</div>
+          </span>
+        </button>
+        <button class="btn btn-ghost" id="qa-report">
+          <span class="icon">⚒</span>
+          <span>
+            <div>Texnikka xabar</div>
+            <div style="font-size:11px;opacity:.8;font-weight:400">Muammoni bildiring</div>
+          </span>
+        </button>
+        <button class="btn btn-ghost" id="qa-order">
+          <span class="icon">◇</span>
+          <span>
+            <div>Xona xizmati</div>
+            <div style="font-size:11px;opacity:.8;font-weight:400">Buyurtma yarating</div>
+          </span>
+        </button>
       </div>
 
       <div class="dashboard-grid">
@@ -309,6 +345,117 @@
         ${maintenanceCard(openMaintenance, 'Texnik xizmat so\'rovlari')}
       </div>
     `;
+
+    // Tezkor amal tugmalari
+    $('#qa-checkin', container)?.addEventListener('click', () => {
+      // Birinchi bo'sh xonani tanlab modal ochamiz, foydalanuvchi xonani o'zgartira oladi
+      const firstAvailable = availableRooms[0];
+      if (firstAvailable) {
+        showCheckInModal(firstAvailable.number, () => dashboard(container));
+      }
+    });
+
+    $('#qa-checkout', container)?.addEventListener('click', () => {
+      if (occupiedRooms.length === 1) {
+        // Faqat bitta xona band bo'lsa, undan check-out qilamiz
+        const rn = occupiedRooms[0].number;
+        if (confirm(`Xona ${rn} dan check-out qilinsinmi?`)) {
+          API.checkOut(rn)
+            .then((res) => {
+              if (typeof window.HotelOS.showBillModal === 'function') {
+                window.HotelOS.showBillModal(res.bill);
+              }
+              dashboard(container);
+            })
+            .catch((err) => UI.toast(err.message, { severity: 'danger' }));
+        }
+      } else {
+        // Tanlash modali ochamiz
+        showCheckoutSelectorModal(occupiedRooms, () => dashboard(container));
+      }
+    });
+
+    $('#qa-report', container)?.addEventListener('click', () => {
+      showReportIssueSelectorModal(rooms, () => dashboard(container));
+    });
+
+    $('#qa-order', container)?.addEventListener('click', () => {
+      location.hash = 'orders';
+    });
+  }
+
+  /** Check-out qilish uchun xonani tanlash modali */
+  function showCheckoutSelectorModal(occupiedRooms, onSuccess) {
+    if (occupiedRooms.length === 0) return;
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">Check-out qilinadigan xonani tanlang</h3>
+          <button class="btn-icon modal-close" type="button" aria-label="Yopish">✕</button>
+        </div>
+        <div class="modal-body" style="display:flex;flex-direction:column;gap:8px">
+          ${occupiedRooms.map((r) => `
+            <button class="btn btn-ghost" data-co-room="${r.number}" style="justify-content:space-between;text-align:left">
+              <span><b>Xona ${r.number}</b> — ${UI.ROOM_TYPE_LABELS[r.type] || r.type}</span>
+              <span style="color:var(--text-muted);font-size:12px">${r.occupiedAt ? fmtDur(Date.now() - r.occupiedAt) + ' band' : ''}</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelectorAll('.modal-close').forEach((b) => b.addEventListener('click', close));
+    $$('[data-co-room]', modal).forEach((b) => {
+      b.addEventListener('click', async () => {
+        const rn = parseInt(b.dataset.coRoom, 10);
+        close();
+        try {
+          const res = await API.checkOut(rn);
+          if (typeof window.HotelOS.showBillModal === 'function') {
+            window.HotelOS.showBillModal(res.bill);
+          }
+          if (typeof onSuccess === 'function') onSuccess();
+        } catch (err) { UI.toast(err.message, { severity: 'danger' }); }
+      });
+    });
+  }
+
+  /** Texnik xizmat so'rovi uchun xonani tanlash modali */
+  function showReportIssueSelectorModal(rooms, onSuccess) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:480px">
+        <div class="modal-header">
+          <h3 class="modal-title">Qaysi xonada muammo bor?</h3>
+          <button class="btn-icon modal-close" type="button" aria-label="Yopish">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Xona raqami</label>
+            <select class="form-select" id="rsl-room">
+              ${rooms.map((r) => `<option value="${r.number}">Xona ${r.number} — ${UI.ROOM_TYPE_LABELS[r.type] || r.type} (${UI.STATUS_LABELS[r.status] || r.status})</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-hint">Tanlangandan keyin kategoriya va tavsifni kiriting</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" type="button">Bekor qilish</button>
+          <button class="btn btn-primary" id="rsl-next" type="button">Davom etish →</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelectorAll('.modal-close').forEach((b) => b.addEventListener('click', close));
+    $('#rsl-next', modal).addEventListener('click', () => {
+      const rn = parseInt($('#rsl-room', modal).value, 10);
+      close();
+      showReportIssueModal(rn, onSuccess);
+    });
   }
 
   // -- Tozalash xodimi: faqat tozalash bilan bog'liq -------------------------
