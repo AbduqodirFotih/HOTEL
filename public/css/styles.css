@@ -799,12 +799,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
   background: currentColor;
 }
 
-.status-clean       { background: var(--status-clean-bg);       color: var(--status-clean-text); }
-.status-dirty       { background: var(--status-dirty-bg);       color: var(--status-dirty-text); }
-.status-cleaning    { background: var(--status-cleaning-bg);    color: var(--status-cleaning-text); }
-.status-cleaned     { background: #FEF3C7; color: #92400E; }
-.status-maintenance { background: var(--status-maintenance-bg); color: var(--status-maintenance-text); }
-.status-occupied    { background: var(--status-occupied-bg);    color: var(--status-occupied-text); }
+.status-clean,
+.status-available        { background: var(--status-clean-bg);       color: var(--status-clean-text); }
+.status-dirty,
+.status-cleaning_required { background: var(--status-dirty-bg);      color: var(--status-dirty-text); }
+.status-cleaning         { background: var(--status-cleaning-bg);    color: var(--status-cleaning-text); }
+.status-cleaned,
+.status-inspection       { background: #FEF3C7; color: #92400E; }
+.status-maintenance      { background: var(--status-maintenance-bg); color: var(--status-maintenance-text); }
+.status-occupied         { background: var(--status-occupied-bg);    color: var(--status-occupied-text); }
+
+/* Maintenance request status pills */
+.maint-status-open         { background: #FEE2E2; color: #991B1B; }
+.maint-status-acknowledged { background: #DBEAFE; color: #1E40AF; }
+.maint-status-in_progress  { background: #FEF3C7; color: #92400E; }
+.maint-status-resolved     { background: var(--status-clean-bg); color: var(--status-clean-text); }
 
 .priority-critical  { background: #FEE2E2; color: #991B1B; }
 .priority-high      { background: #FED7AA; color: #9A3412; }
@@ -815,6 +824,97 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .room-card.stale {
   border-color: #F59E0B;
   background: linear-gradient(135deg, #FFFEFB, #FEF3C7);
+}
+
+/* Room action bar — appears below the timer ribbon with a subtle accent */
+.room-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(0deg, var(--bg-subtle), transparent);
+  margin-top: 8px;
+}
+.room-actions .btn-sm {
+  flex: 1 1 auto;
+  min-width: 120px;
+  white-space: nowrap;
+}
+/* Action-required visual cue: subtle yellow left border when room has buttons */
+.room-card:has(.room-actions) {
+  border-left: 3px solid var(--primary);
+}
+.room-card:has(.room-actions .btn-success) {
+  border-left-color: var(--success);
+}
+.room-card:has(.room-actions .btn-primary[data-action="start-cleaning"]) {
+  border-left-color: var(--warning);
+}
+
+/* Maintenance state machine row — action button on the right */
+.maint-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.maint-row:last-child { border-bottom: 0; }
+.maint-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.maint-row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+/* Supervisor view — manager dashboard live ticker style */
+.supervisor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.supervisor-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.supervisor-card h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 10px;
+}
+.supervisor-card .activity-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+.supervisor-card .activity-item:last-child { border-bottom: 0; }
+.supervisor-card .activity-item .actor {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.supervisor-card .activity-item .timing {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .room-card.stale::after {

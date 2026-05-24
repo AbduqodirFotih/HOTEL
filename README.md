@@ -100,8 +100,52 @@ alohida konteyner sifatida ajratish imkonini beradi.
 ### 🏠 Xonalar (10 ta xona · 2 qavat)
 
 10 ta xona — har qavatda 5 ta (101-105, 201-205). Aralash turlar:
-3 single, 4 double, 2 suite, 1 accessible. Har bir xona uchun real vaqtli
-holat: **toza · iflos · tozalanmoqda · band · texnik xizmat**.
+3 single, 4 double, 2 suite, 1 accessible.
+
+#### Xona Status Workflow (6 ta holat)
+
+Tizim haqiqiy mehmonxona PMS (Opera, Mews) ish jarayoniga mos keladi — qabul xodimi tozalanganini tasdiqlamaguncha xona yangi mehmonlarga avtomatik berilmaydi:
+
+```
+   ┌─────────────┐  reception           ┌──────────┐
+   │  AVAILABLE  │ ─────check-in───────►│ OCCUPIED │
+   │  (Bo'sh)    │                       │  (Band)  │
+   └─────────────┘                       └────┬─────┘
+          ▲                                   │
+          │ reception                         │ reception
+          │ confirms                          │ check-out
+          │                                   ▼
+   ┌─────────────┐    housekeeping     ┌──────────────────┐
+   │ INSPECTION  │◄────marks clean─────│ CLEANING_REQUIRED│
+   │(Tekshiruvda)│                     │ (Tozalash kerak) │
+   └─────────────┘                     └────────┬─────────┘
+          ▲                                     │
+          │                                     │ housekeeping
+          │   housekeeping                      │ starts
+          │   completes                         ▼
+          │                              ┌─────────────┐
+          └──────────────────────────────│  CLEANING   │
+                                         │(Tozalanmoqda)│
+                                         └─────────────┘
+
+   ┌──────────────┐  Manager force (any state)
+   │ MAINTENANCE  │  Manager clears back to AVAILABLE
+   │(Texnik xizmat)│
+   └──────────────┘
+```
+
+**Asosiy g'oya:** tozalovchi xonani toza deb belgilaganidan keyin xona avtomatik
+"bo'sh" bo'lmaydi. Avval qabul xodimi tekshiradi va shundan keyin yangi mehmonlarga
+berishga ruxsat beradi. Bu mehmonxona sifati va xizmat darajasini ta'minlaydi.
+
+#### Texnik Xizmat Workflow (4 bosqich)
+
+```
+[ OPEN ]  ─acknowledge→  [ ACKNOWLEDGED ]  ─start→  [ IN_PROGRESS ]  ─resolve→  [ RESOLVED ]
+ yangi                   texnik qabul qildi          ish jarayonida              hal qilindi
+```
+
+Har bosqichdagi vaqt belgilanadi — menejer barcha bosqich davomiyligini ko'radi (kim qanday ishni qancha vaqt ichida bajarmoqda).
 
 ### 🔔 12-Soatlik Tozalash Tsikli (asosiy talab)
 
@@ -110,9 +154,9 @@ Agar xonaning oxirgi tozalanish vaqtidan beri **12 soatdan** (sozlamadan) ko'p
 o'tgan bo'lsa:
 
 1. ✉ Tozalovchiga avtomatik bildirishnoma yuboriladi
-2. 🟡 Xona "iflos" deb belgilanadi va tozalash navbatiga qo'shiladi
+2. 🟡 Xona "tozalash kerak" deb belgilanadi va tozalash navbatiga qo'shiladi
 3. ⏱ Har bir xona kartochkasida **"tozalanganiga X kun Y soat"** va **"iflosligiga Z soat"** ko'rsatilgan
-4. ✅ Tozalovchi xonani toza deb belgilaganida — "Xona tozalandi va tayyor" bildirishnomasi yuboriladi
+4. ✅ Tozalovchi xonani toza deb belgilaganida — qabul xodimi tasdiqlashi uchun "Tekshiruvda" holatiga o'tadi
 
 ### 💎 Premium Light Design
 
@@ -129,10 +173,10 @@ tushirmasdan, `npm test` orqali to'g'ridan-to'g'ri.
 | ID    | Stsenariy                                                                  |
 |-------|----------------------------------------------------------------------------|
 | TS-01 | Mehmon 1-qavatda ikki kishilik xona so'rab check-in qiladi                |
-| TS-02 | Check-out — hisob hisoblanadi, xona iflos bo'ladi                         |
-| TS-03 | Tozalovchi xonani toza deb belgilaydi (dirty → cleaning → clean)          |
+| TS-02 | Check-out — hisob hisoblanadi, xona "Tozalash kerak" bo'ladi              |
+| TS-03 | To'liq tozalash tsikli: tozalash_kk → tozalanmoqda → tekshiruvda → bo'sh  |
 | TS-04 | Xona xizmati: 2 qahva + 1 sandvich, to'liq tsikl                          |
-| TS-05 | Kritik texnik xizmat — ustuvorlik navbati                                 |
+| TS-05 | Kritik texnik xizmat (4 bosqich: open → ack → in_progress → resolved)     |
 | TS-06 | Ikki mehmon bir vaqtda — turli xonalarga tayinlanadi                      |
 | TS-07 | Barcha xonalar band — aniq xato xabari, ishdan chiqish yo'q              |
 | TS-08 | Noto'g'ri kiritish (XSS, manfiy son, bo'sh ism) — tizim barqaror qoladi  |
@@ -162,26 +206,32 @@ Hozirgi natija: **8/8 muvaffaqiyatli** ✓
 
 Tizimda 4 ta rol. Har biri o'z bo'limining doirasida ishlaydi. Backend HAR DOIM rolni qayta tekshiradi — hatto frontend xato qilsa yoki foydalanuvchi to'g'ridan-to'g'ri API ga so'rov yuborsa ham, ruxsatsiz amal **403 Forbidden** bilan rad etiladi.
 
-| Imkoniyat / Sahifa             | Bosh Menejer | Qabul | Tozalash | Texnik |
-|--------------------------------|:---:|:---:|:---:|:---:|
+| Imkoniyat / Sahifa                | Bosh Menejer | Qabul | Tozalash | Texnik |
+|-----------------------------------|:---:|:---:|:---:|:---:|
 | Dashboard (rolga moslashtirilgan) | ✓ | ✓ | ✓ | ✓ |
-| Xonalarni ko'rish              | ✓ | ✓ | ✓ | ✓ |
-| **Narxlarni ko'rish**          | ✓ | ✓ | ❌ | ❌ |
+| Xodimlar nazorat paneli (kim nima qilmoqda) | ✓ | ❌ | ❌ | ❌ |
+| Xonalarni ko'rish                 | ✓ | ✓ | ✓ | ✓ |
+| **Narxlarni ko'rish**             | ✓ | ✓ | ❌ | ❌ |
 | Mehmon ro'yxati va ismlarni ko'rish | ✓ | ✓ | ❌ | ❌ |
-| Check-in / Check-out qilish    | ✓ | ✓ | ❌ | ❌ |
-| Buyurtma yaratish              | ✓ | ✓ | ❌ | ❌ |
-| Buyurtma holatini o'zgartirish | ✓ | ✓ | ❌ | ❌ |
-| Menyu va narxlarni ko'rish     | ✓ | ✓ | ❌ | ❌ |
-| Tozalashni boshlash/yakunlash  | ✓ | ❌ | ✓ | ❌ |
-| Tozalash navbatiga qo'shish    | ✓ | ✓ | ✓ | ❌ |
-| Texnik xizmat so'rovi yuborish | ✓ | ✓ | ❌ | ✓ |
-| Texnik xizmat so'rovini hal qilish | ✓ | ❌ | ❌ | ✓ |
-| Daromad statistikasi           | ✓ | ❌ | ❌ | ❌ |
+| Check-in / Check-out qilish       | ✓ | ✓ | ❌ | ❌ |
+| **Xonani "bo'sh" deb tasdiqlash** (inspection → available) | ✓ | ✓ | ❌ | ❌ |
+| **Xonani "tozalash kerak" deb qo'lda belgilash** | ✓ | ✓ | ❌ | ❌ |
+| Buyurtma yaratish / o'zgartirish  | ✓ | ✓ | ❌ | ❌ |
+| Menyu va narxlarni ko'rish        | ✓ | ✓ | ❌ | ❌ |
+| Tozalashni boshlash               | ✓ | ❌ | ✓ | ❌ |
+| Tozalashni yakunlash (→ inspection) | ✓ | ❌ | ✓ | ❌ |
+| Tozalash navbatiga qo'shish       | ✓ | ✓ | ✓ | ❌ |
+| Texnik xizmat so'rovi yuborish    | ✓ | ✓ | ❌ | ✓ |
+| Texnik xizmat: qabul qilish (acknowledge) | ✓ | ❌ | ❌ | ✓ |
+| Texnik xizmat: boshlash (start)   | ✓ | ❌ | ❌ | ✓ |
+| Texnik xizmat: hal qilish (resolve) | ✓ | ❌ | ❌ | ✓ |
+| Xonani majburiy texnik xizmatga qo'yish | ✓ | ❌ | ❌ | ❌ |
+| Daromad statistikasi              | ✓ | ❌ | ❌ | ❌ |
 | Test stsenariylari ishga tushirish | ✓ | ❌ | ❌ | ❌ |
-| Hodisa jurnali (broker log)    | ✓ | ✓ | ✓ | ✓ |
-| Sozlamalarni ko'rish           | ✓ | ✓ | ✓ | ✓ |
-| Sozlamalarni o'zgartirish      | ✓ | ❌ | ❌ | ❌ |
-| Ma'lumotlarni qayta tiklash    | ✓ | ❌ | ❌ | ❌ |
+| Hodisa jurnali (broker log)       | ✓ | ✓ | ✓ | ✓ |
+| Sozlamalarni ko'rish              | ✓ | ✓ | ✓ | ✓ |
+| Sozlamalarni o'zgartirish         | ✓ | ❌ | ❌ | ❌ |
+| Ma'lumotlarni qayta tiklash       | ✓ | ❌ | ❌ | ❌ |
 
 **Ikki qatlam himoya:** har bir API endpoint avval `requireAuth` (token), keyin `requirePermission(perm)` (aniq harakat huquqi) tekshiradi. Ma'lumotlar darajasida — `sanitizeForRole()` funksiyasi rolga ruxsat etilmagan maydonlarni (narxlar, daromad, menyu narxlari, qo'shimcha to'lovlar) javobdan butunlay olib tashlaydi. Hatto frontend xato qilsa yoki foydalanuvchi to'g'ridan-to'g'ri `curl` orqali API ga so'rov yuborsa ham, ruxsatsiz amal **403 Forbidden** bilan rad etiladi va maxfiy ma'lumotlar uzatilmaydi.
 
@@ -302,6 +352,39 @@ almashtiradi va hisob tafsilotlarini olib tashlaydi.
 hujumchiga foydalanuvchilarni aniqlashga yordam berardi.
 
 **Tuzatish:** Yagona xabar — "Foydalanuvchi nomi yoki parol noto'g'ri".
+
+### 4. Workflow to'liqligi va action button'larning yo'qligi (v4 qayta loyihalash)
+
+**Vaziyat:** Dastlabki versiyalarda xona ish jarayoni 4 ta holat edi (clean →
+occupied → dirty → cleaning → clean). Bu Opera/Mews kabi real PMS lardan
+sezilarli farq qildi: qabul xodimi tozalanganini tekshirmasdan, xona avtomatik
+yangi mehmonlarga berilardi. Bundan tashqari, dashboard kartochkalarida ruxsat
+etilgan rollar uchun amaliy tugmalar yo'q edi — foydalanuvchilar faqat
+monitoring qila olishdi, lekin amal qila olmadi. Maintenance workflow ham
+3 bosqichli edi (open → in_progress → resolved) va texnik ish qabul qilgan/qabul
+qilmaganligini ajratib bo'lmadi.
+
+**Aniqlanish:** Yakuniy foydalanuvchidan keladi: "bosh manager faqat monitoring
+qilyapti", "tozalanmoqda turaveradi, tugatish tugma yo'q", "texnik so'rov
+yuborish forma yo'q".
+
+**Tuzatish:** Yangi 6 ta holatli xona workflow (yuqorida diagramma); 4 ta
+holatli texnik xizmat workflow; barcha dashboard kartochkalarida `can(perm)`
+asosida shartli action button'lar; menejer uchun **"Xodimlar Nazorat Paneli"**
+kartochkasi (kim hozir tozalamoqda, qancha vaqt kutgan, kim qaysi texnik ishi
+ustida); inspectionCard reception sahifasida.
+
+### 5. Status nomlarining noaniqligi
+
+**Vaziyat:** "Iflos" (dirty) va "Toza" (clean) ko'rinishida foydalanuvchi
+tajribasi past edi. "Iflos" so'zi salbiy ohangda, "toza" esa bir vaqtning
+o'zida ham fizik holatni (tozalangan) ham mantiqiy holatni (yangi mehmonlarga
+tayyor) bildirardi.
+
+**Tuzatish:** Status nomlari ma'noli qilib o'zgartirildi: `cleaning_required`
+("Tozalash kerak"), `inspection` ("Tekshiruvda"), `available` ("Bo'sh va
+tayyor"). Eski nomlar `_migrateStatuses()` orqali avtomatik ko'chiriladi —
+oldingi `data.json` fayllar buzilmaydi.
 
 ---
 
